@@ -43,6 +43,7 @@ async fn run(cmd: RunCommand) -> Result<(), Error> {
 }
 
 pub async fn execute() -> Result<(), Error> {
+    tracing_subscriber::fmt().init();
     let cli = Cli::parse();
     match cli.command {
         Commands::Run(cmd) => run(cmd).await,

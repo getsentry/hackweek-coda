@@ -11,6 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::unix::pipe;
 use tokio::sync::Mutex;
 use tokio::time;
+use tracing::{event, Level};
 use uuid::Uuid;
 
 use anyhow::Error;
@@ -46,6 +47,8 @@ impl Controller {
         let worker_id = Uuid::new_v4();
         let rx_path = self.home.path().join(format!("rx-{}.pipe", worker_id));
         let tx_path = self.home.path().join(format!("tx-{}.pipe", worker_id));
+
+        event!(Level::INFO, "Worker {} spawning", worker_id);
 
         mkfifo(&rx_path, stat::Mode::S_IRWXU)?;
         mkfifo(&tx_path, stat::Mode::S_IRWXU)?;
@@ -106,6 +109,7 @@ impl Worker {
 
     /// Requests the worker to shut down.
     pub async fn request_shutdown(&self) -> Result<(), Error> {
+        event!(Level::INFO, "Worker {} requesting shutdown", self.worker_id);
         self.send_msg(Message::RequestWorkerShutdown(RequestWorkerShutdown {}))
             .await?;
         Ok(())
