@@ -1,0 +1,11 @@
+[package]
+name = "coda-ipc"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ciborium = "0.2.1"
+serde = { version = "1.0.185", features = ["derive"] }
+uuid = { version = "1.4.1", features = ["serde"] }
