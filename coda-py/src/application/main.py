@@ -1,15 +1,16 @@
-import coda_queue as q
 import asyncio
 
-from coda_py.workflows import MyWorkflow
+from application.workflows import MyWorkflow
+from core.coda_supervisor import Supervisor
+from core.coda_worker import Worker
 
 
 async def run():
     # TODO: will be configured from upstream.
     url = "localhost:2233"
-    supervisor = q.Supervisor(url)
+    supervisor = Supervisor(url)
 
-    worker = q.Worker(tasks=[], workflows=[MyWorkflow])
+    worker = Worker(tasks=[], workflows=[MyWorkflow])
     await worker.run_with_supervisor(supervisor)
 
 

@@ -1,12 +1,12 @@
-import coda_queue as q
-from coda_py.tasks import sum_two_numbers
+from application.tasks import sum_two_numbers
+from core.coda_workflow import coda_workflow
 
 
-@q.coda_workflow(workflow_name="MyWorkflow")
+@coda_workflow(workflow_name="MyWorkflow")
 class MyWorkflow:
 
     def run(self, a, b):
-        self.context.execute_task(
+        self.context.spawn_task(
             sum_two_numbers,
             [a, b],
             {"a": a, "b": b}
