@@ -214,3 +214,18 @@ def kafka_consumer(ctx):
             }))
         ctx.await_all(workflows)
         batch.commit()
+
+
+
+def main():
+    import q
+
+    import task1
+    import task2
+    import workflow1
+
+    registry = q.Registry(
+        tasks=[task1.task1, task2.task2],
+        workflow=[workflow1.workflow1],
+    )
+    registry.run_with_supervisor()
