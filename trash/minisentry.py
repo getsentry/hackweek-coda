@@ -59,54 +59,80 @@ class Context:
 
     def start_workflow(self, workflow_name, params):
         run_id = self.new_uuid()
+        params_id = self.new_uuid()
+        
+        self.master.send_request({
+            "cmd": "store_params",
+            "args": {
+                "workflow_run_id": self.workflow.run_id,
+                "params_id": params_id,
+                "params": params,
+            },
+        })
+
         self.master.send_request({
             "cmd": "start_workflow",
             "args": {
-                "workflow": workflow_name,
-                "run_id": run_id,
-                "params": kwargs,
-                "workflow": self.workflow.run_id,
+                "workflow_name": workflow_name,
+                "workflow_run_id": run_id,
+                "params_id": params_id,
             },
         })
         return WorkflowHandle(run_id)
 
     def spawn_cached(self, task_name, cache_key, params):
         task_key = hash_cache_key(
-            [self.workflow.run_id, task_name] + list(cache_key))
+            [self.workflow.run_id, task_name] + list(cache_key)
+        )
 
         # Check if we already ran
         task_id = self.master.send_request({
             "cmd": "get_finished_task_id",
             "args": {
+                # We don't need the task_id here, since it's just used
+                # to disambiguate the at least once semantics of execution.
                 "task_key": task_key,
-                "task": task_name,
                 "workflow": self.workflow.run_id,
             }
         })
         if task_id:
             return TaskHandle(task_id, task_key)
 
+        params_id = self.new_uuid()
         task_id = self.new_uuid()
         self.master.send_request({
-            "cmd": "store_parameters",
+            "cmd": "store_params",
             "args": {
-                "task_key": task_key,
-                "task": task_name,
-                "params": kwargs,
-                "workflow": self.workflow.run_id,
+                "workflow_run_id": self.workflow.run_id,
+                "params_id": params_id,
+                "params": params,
             },
         })
+
         self.master.send_request({
             "cmd": "spawn_task",
             "args": {
-                "task": _task_name,
+                "task_name": task_name,
+                "task_id": task_id,
                 "task_key": task_key,
-                "param_id": param_id,
+                "params_id": params_id,
                 "workflow_run_id": self.workflow.run_id,
                 "persist_result": True,   # cached means persist result
             },
         })
+        
         return TaskHandle(task_id, task_key)
+
+    async def await_one(self, task_handle):
+        # Either we wait for a response or we need to somehow subscribe
+        # on the manager to get new events.
+        return await self.master.send_request({
+            "cmd": "get_task_result",
+            "args": {
+                "task_id": task_handle.task_id,
+                "taks_key": task_handle.task_key
+            }
+        })
 
 
 @q.workflow("boost_low_volume_projects")
@@ -167,6 +193,15 @@ def normalize_event(ctx, event_data):
     new_event_data, changed = normalize_event_data(event_data)
     if changed:
         return new_event_data
+
+
+@q.task("fetch_url")
+def fetch_url(ctx, url):
+    task_key = ctx.current_task.task_key
+    fetcher.submit_fetch_request(url, task_key=task_key)
+
+    # when fetch is done it calls ctx.submit_result(task_key, result)
+    return q.RESULT_PENDING
 
 
 def kafka_consumer(ctx):
