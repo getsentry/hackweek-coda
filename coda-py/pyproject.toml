@@ -5,7 +5,10 @@ description = "Add your description here"
 authors = [
     { name = "Armin Ronacher", email = "armin.ronacher@active-4.com" }
 ]
-dependencies = []
+dependencies = [
+    "cbor2>=5.4.6",
+    "setuptools>=68.1.2",
+]
 readme = "README.md"
 requires-python = ">= 3.8"
 
