@@ -1,7 +1,9 @@
 import uuid
 from abc import ABC, abstractmethod
-from weakref import ref as weakref
-from cbor2 import dumps, loads, load
+import hashlib
+import cbor2
+import os
+import struct
 
 
 def coda_workflow(workflow_name):
@@ -17,28 +19,24 @@ def coda_workflow(workflow_name):
     return decorator
 
 
+def coda_task(task_name):
+    def decorator(func):
+        func.__task_name__ = task_name
+
+        return func
+
+    return decorator
+
+
 def generate_id():
     return uuid.uuid4()
 
 
-class Message:
-    pass
-
-
-class ExecuteWorkflow(Message):
-
-    def __init__(self, workflow_name, workflow_params):
-        self.workflow_name = workflow_name
-        self.workflow_params = workflow_params
-
-
-class ExecuteTask(Message):
-
-    def __init__(self, workflow_run_id, task_id, task_key, task_params):
-        self.workflow_run_id = workflow_run_id
-        self.task_id = task_id
-        self.task_key = task_key
-        self.task_params = task_params
+def hash_cache_key(items):
+    h = hashlib.md5()
+    for item in items:
+        h.update(str(item).encode("utf-8"))
+    return h.hexdigest()
 
 
 class SupervisorAPI(ABC):
@@ -51,33 +49,64 @@ class SupervisorAPI(ABC):
     def register_tasks(self, tasks):
         pass
 
+    @abstractmethod
+    def register_workflows(self, workflows):
+        pass
+
+    @abstractmethod
+    def get_params(self, params_id):
+        pass
+
 
 class CborSupervisorAPI(SupervisorAPI):
 
     def __init__(self, url):
         self.url = url
+        self.rx = open(os.environ["CODA_WORKER_READ_PATH"], "rb")
+        self.tx = open(os.environ["CODA_WORKER_WRITE_PATH"], "wb")
 
-    @staticmethod
-    def _make_request(cmd, args):
+    def _write_to_pipe(self, cmd, args):
         request = {
             "cmd": cmd,
             "args": args
         }
 
-        serialized_request = dumps(request)
-        # TODO: send it upstream through the fifo file.
+        msg = cbor2.dumps(request)
+        self.tx.write(struct.pack('!i', len(msg)))
+        self.tx.write(msg)
+
+    def _read_from_pipe(self):
+        msg = self.rx.read(4)
+        if not msg:
+            return
+
+        bytes_vals = self.rx.read(struct.unpack('!i', msg)[0])
+        if not bytes_vals:
+            return
+
+        return cbor2.loads(bytes_vals)
 
     def get_next_message(self):
-        # TODO: implement reading logic.
-        pass
+        return self._read_from_pipe()
 
     def register_tasks(self, tasks):
-        self._make_request(
+        self._write_to_pipe(
             cmd="register_tasks",
             args={
                 "tasks": tasks
             }
         )
+
+    def register_workflows(self, workflows):
+        self._write_to_pipe(
+            cmd="register_workflows",
+            args={
+                "workflows": workflows
+            }
+        )
+
+    def get_params(self, params_id):
+        pass
 
 
 class Supervisor:
@@ -85,71 +114,62 @@ class Supervisor:
     def __init__(self, url):
         self.api = CborSupervisorAPI(url)
 
-    def get_next_message(self):
-        return self.api.get_next_message()
-
-    def register_tasks(self, tasks):
-        self.api.register_tasks(tasks)
-
-    def register_workflows(self, workflows):
-        pass
-
-# Check if workflow is supported
-# Initialize the context which is linked to the supervisor
-# Create workflow with a run id and bind it to the context
-# Store it in a map keyed by (name, run_id)
-#
-
 
 class Worker:
 
-    def __int__(self, tasks, workflows):
+    def __init__(self, tasks, workflows):
         self.supported_tasks = tasks
         self.supported_workflows = workflows
 
-        self._workflows = []
+        self._active_workflows = {}
 
     async def run_with_supervisor(self, supervisor):
         self._register(supervisor)
-        self._loop(supervisor)
+        await self._loop(supervisor)
 
     def _register(self, supervisor):
-        supervisor.register_tasks(self.supported_tasks)
-        supervisor.register_workflows(self.supported_workflows)
+        supervisor.api.register_tasks([task.__task_name__ for task in self.supported_tasks])
+        supervisor.api.register_workflows([workflow.__workflow_name__ for workflow in self.supported_workflows])
 
-    def _loop(self, supervisor):
+    async def _loop(self, supervisor):
         while True:
-            message = supervisor.get_next_message()
-            self._handle_message(supervisor, message)
+            message = supervisor.api.get_next_message()
+            await self._handle_message(supervisor, message)
 
-    def _handle_message(self, supervisor, message):
-        if isinstance(message, ExecuteWorkflow):
-            self._execute_workflow(supervisor, message)
-        elif isinstance(message, ExecuteTask):
-            self._execute_task()
+    async def _handle_message(self, supervisor, message):
+        print(message)
+        if message["cmd"] == "start_workflow":
+            return await self._execute_workflow(supervisor, message["args"])
 
         raise RuntimeError("Message not supported")
 
-    def _execute_workflow(self, supervisor, message):
-        workflow_name = message.workflow_name
+    async def _execute_workflow(self, supervisor, message):
+        workflow_name = message["workflow_name"]
+        workflow_run_id = message["workflow_run_id"]
+        params_id = message["params_id"]
 
         found_workflow = None
-        for workflow in self.supported_workflows:
-            if workflow.__workflow_name__ == workflow_name:
-                found_workflow = workflow
+        for supported_workflow in self.supported_workflows:
+            if supported_workflow.__workflow_name__ == workflow_name:
+                found_workflow = supported_workflow
 
         if found_workflow is None:
             raise RuntimeError(f"Workflow {workflow_name} is not supported in this worker")
 
-        workflow_run_id = generate_id()
         workflow_context = WorkflowContext(workflow_run_id, supervisor)
 
-        workflow = found_workflow()
+        workflow_instance = found_workflow()
+        workflow_instance.set_context(workflow_context)
 
-        found_workflow.set_context(workflow_context)
-        found_workflow.run(**message.workflow_params)
+        # We store active workflows so that we know what is being executed.
+        active_workflow = (workflow_name, workflow_run_id)
+        self._active_workflows[active_workflow] = workflow_instance
 
-    def _execute_task(self, supervisor, message):
+        # We fetch the params and run the workflow.
+        workflow_params = supervisor.api.get_params(params_id)
+        workflow_instance.run(**workflow_params)
+
+    async def _execute_task(self, supervisor, message):
         pass
 
 
@@ -159,5 +179,11 @@ class WorkflowContext:
         self.workflow_run_id = workflow_run_id
         self.supervisor = supervisor
 
-    def execute_task(self):
-        pass
+    def execute_task(self, task_function, persistence_key, params):
+        task_name = task_function.__name__
+        task_id = generate_id()
+        task_key = hash_cache_key(
+            [self.workflow_run_id, task_name] + list(persistence_key)
+        )
+
+        print(f"Executing task {task_name}")
