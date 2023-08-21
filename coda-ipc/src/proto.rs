@@ -7,6 +7,8 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
 pub enum Message {
+    HelloWorker(HelloWorker),
+    RequestWorkerShutdown(RequestWorkerShutdown),
     SpawnTask(SpawnTask),
     StoreParams(StoreParams),
     StartWorkflow(StartWorkflow),
@@ -14,27 +16,35 @@ pub enum Message {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct HelloWorker {
+    pub worker_id: Uuid,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RequestWorkerShutdown {}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SpawnTask {
-    task_name: String,
-    task_id: Uuid,
-    task_key: Uuid,
-    param_id: Uuid,
-    workflow_run_id: Uuid,
-    persist_result: bool,
+    pub task_name: String,
+    pub task_id: Uuid,
+    pub task_key: Uuid,
+    pub param_id: Uuid,
+    pub workflow_run_id: Uuid,
+    pub persist_result: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StoreParams {
-    workflow_run_id: Uuid,
-    params_id: Uuid,
-    params: BTreeMap<String, Value>,
+    pub workflow_run_id: Uuid,
+    pub params_id: Uuid,
+    pub params: BTreeMap<String, Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StartWorkflow {
-    workflow_name: String,
-    workflow_run_id: Uuid,
-    params_id: Uuid,
+    pub workflow_name: String,
+    pub workflow_run_id: Uuid,
+    pub params_id: Uuid,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -48,8 +58,8 @@ pub enum TaskStatus {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PublishTaskResult {
-    task_id: Uuid,
-    task_key: Uuid,
-    result: Value,
-    status: TaskStatus,
+    pub task_id: Uuid,
+    pub task_key: Uuid,
+    pub result: Value,
+    pub status: TaskStatus,
 }
