@@ -1,4 +1,5 @@
 import os
+import uuid
 import cbor2
 import struct
 
@@ -23,15 +24,21 @@ def write_msg(cmd, args):
 
 
 idx = 0
-while True:
-    msg = read_msg()
-    print('<<<', msg)
-    if msg["cmd"] == "request_worker_shutdown":
-        break
-    idx += 1
-    if idx == 1:
-        write_msg("ping", {})
-        write_msg("worker_start", {
-            "tasks": ["foo", "bar", "baz"],
-            "workflows": ["workflow_foo"],
-        })
+worker_id = None
+try:
+    while True:
+        msg = read_msg()
+        print('<<<', msg)
+        if msg["cmd"] == "hello_worker":
+            worker_id = uuid.UUID(bytes=msg["args"]["worker_id"])
+        if msg["cmd"] == "request_worker_shutdown":
+            break
+        idx += 1
+        if idx == 1:
+            write_msg("ping", {})
+            write_msg("worker_start", {
+                "tasks": ["foo", "bar", "baz"],
+                "workflows": ["workflow_foo"],
+            })
+except KeyboardInterrupt:
+    pass

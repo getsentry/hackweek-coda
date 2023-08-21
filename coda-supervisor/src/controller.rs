@@ -114,7 +114,6 @@ impl Controller {
             remaining_worker_futures.push(self.workers[ready_idx].read_msg().boxed());
             worker_futures = remaining_worker_futures;
         }
-        Ok(())
     }
 
     async fn handle_message(&self, worker: &Worker, msg: Message) -> Result<(), Error> {
