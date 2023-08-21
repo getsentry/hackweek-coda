@@ -1,6 +1,8 @@
 import uuid
 from abc import ABC, abstractmethod
 import hashlib
+from enum import Enum
+
 import cbor2
 import os
 import struct
@@ -106,13 +108,24 @@ class CborSupervisorAPI(SupervisorAPI):
         )
 
     def get_params(self, params_id):
-        pass
+        self._write_to_pipe(
+            cmd="get_params",
+            args={
+                "params_id": params_id
+            }
+        )
 
 
 class Supervisor:
 
     def __init__(self, url):
         self.api = CborSupervisorAPI(url)
+
+
+class MessageHandlingResult(Enum):
+    SUCCESS = 0
+    ERROR = 1
+    STOP = 2
 
 
 class Worker:
@@ -122,6 +135,7 @@ class Worker:
         self.supported_workflows = workflows
 
         self._active_workflows = {}
+        self._active_tasks = {}
 
     async def run_with_supervisor(self, supervisor):
         self._register(supervisor)
@@ -134,12 +148,24 @@ class Worker:
     async def _loop(self, supervisor):
         while True:
             message = supervisor.api.get_next_message()
-            await self._handle_message(supervisor, message)
+            handling_result = await self._handle_message(supervisor, message)
+
+            # If the worker is told to stop, we immediately break out of the loop.
+            if handling_result == MessageHandlingResult.STOP:
+                break
+            elif handling_result == MessageHandlingResult.ERROR:
+                raise RuntimeError("An error happened while handling a message")
 
     async def _handle_message(self, supervisor, message):
-        print(message)
-        if message["cmd"] == "start_workflow":
+        cmd = message["cmd"]
+
+        if cmd == "hello_worker":
+            print("Hi!")
+            return MessageHandlingResult.SUCCESS
+        elif cmd == "start_workflow":
             return await self._execute_workflow(supervisor, message["args"])
+        elif cmd == "request_worker_shutdown":
+            return MessageHandlingResult.STOP
 
         raise RuntimeError("Message not supported")
 
@@ -169,8 +195,11 @@ class Worker:
         workflow_params = supervisor.api.get_params(params_id)
         workflow_instance.run(**workflow_params)
 
+        return MessageHandlingResult.SUCCESS
+
     async def _execute_task(self, supervisor, message):
-        pass
+        # TODO: implement task execution.
+        return MessageHandlingResult.SUCCESS
 
 
 class WorkflowContext:
