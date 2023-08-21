@@ -12,5 +12,9 @@ ciborium = "0.2.1"
 clap = { version = "4.3.23", features = ["derive"] }
 coda-ipc = { version = "0.1.0", path = "../coda-ipc" }
 nix = { version = "0.26.2", features = ["fs"] }
+serde = "1.0.185"
 tempfile = "3.8.0"
 tokio = { version = "1.32.0", features = ["full"] }
+tracing = { version = "0.1.37", features = ["async-await"] }
+tracing-subscriber = "0.3.17"
+uuid = { version = "1.4.1", features = ["v4"] }

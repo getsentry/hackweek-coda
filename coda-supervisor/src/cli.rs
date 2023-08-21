@@ -34,10 +34,16 @@ async fn run(cmd: RunCommand) -> Result<(), Error> {
     for _ in 0..cmd.worker_count {
         controller.spawn_worker(&mut c).await?;
     }
+
+    for worker in controller.iter_workers() {
+        worker.request_shutdown().await?;
+    }
+
     Ok(())
 }
 
 pub async fn execute() -> Result<(), Error> {
+    tracing_subscriber::fmt().init();
     let cli = Cli::parse();
     match cli.command {
         Commands::Run(cmd) => run(cmd).await,
