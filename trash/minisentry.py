@@ -216,6 +216,18 @@ def kafka_consumer(ctx):
         batch.commit()
 
 
+def workflow(name=None):
+    def decorator(f):
+        config = 42
+        f.__coda_workflow__ = config
+        return f
+    return decorator
+
+
+@workflow(name="Foo")
+def my_workflow(ctx):
+    pass
+
 
 def main():
     import q
