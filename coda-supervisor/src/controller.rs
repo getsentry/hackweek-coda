@@ -1,3 +1,4 @@
+use bytes::{BufMut, BytesMut};
 use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
@@ -43,7 +44,7 @@ impl Controller {
         cmd.env("CODA_WORKER_READ_PATH", &tx_path);
         let child = cmd.spawn()?;
 
-        let tx = loop {
+        let mut tx = loop {
             match pipe::OpenOptions::new().open_sender(&tx_path) {
                 Ok(tx) => break tx,
                 Err(e) if e.raw_os_error() == Some(ENXIO) => {}
@@ -51,6 +52,13 @@ impl Controller {
             }
             time::sleep(Duration::from_millis(50)).await;
         };
+
+        let mut buf = Vec::<u8>::new();
+        ciborium::into_writer("Hello World!", &mut buf).unwrap();
+        let mut prefix = BytesMut::with_capacity(4);
+        prefix.put_u32(buf.len() as u32);
+        tx.write_all(&prefix[..]).await?;
+        tx.write_all(&buf[..]).await?;
 
         self.workers.push(Worker { child, rx, tx });
         Ok(())

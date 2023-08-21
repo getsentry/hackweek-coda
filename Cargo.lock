@@ -212,6 +212,8 @@ name = "coda-supervisor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
+ "ciborium",
  "clap",
  "coda-ipc",
  "nix",

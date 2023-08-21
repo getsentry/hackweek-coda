@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
+bytes = "1.4.0"
+ciborium = "0.2.1"
 clap = { version = "4.3.23", features = ["derive"] }
 coda-ipc = { version = "0.1.0", path = "../coda-ipc" }
 nix = { version = "0.26.2", features = ["fs"] }
