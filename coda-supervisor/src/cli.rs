@@ -3,6 +3,7 @@ use std::process::Command;
 
 use anyhow::Error;
 use clap::{Parser, Subcommand};
+use tracing::metadata::LevelFilter;
 
 use crate::controller::Controller;
 
@@ -35,6 +36,8 @@ async fn run(cmd: RunCommand) -> Result<(), Error> {
         controller.spawn_worker(&mut c).await?;
     }
 
+    controller.run_loop().await?;
+
     for worker in controller.iter_workers() {
         worker.request_shutdown().await?;
     }
@@ -43,7 +46,9 @@ async fn run(cmd: RunCommand) -> Result<(), Error> {
 }
 
 pub async fn execute() -> Result<(), Error> {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt()
+        .with_max_level(LevelFilter::DEBUG)
+        .init();
     let cli = Cli::parse();
     match cli.command {
         Commands::Run(cmd) => run(cmd).await,

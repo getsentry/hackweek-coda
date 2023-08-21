@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use ciborium::Value;
 use serde::{Deserialize, Serialize};
@@ -9,15 +9,26 @@ use uuid::Uuid;
 pub enum Message {
     HelloWorker(HelloWorker),
     RequestWorkerShutdown(RequestWorkerShutdown),
+    WorkerStart(WorkerStart),
     SpawnTask(SpawnTask),
     StoreParams(StoreParams),
     StartWorkflow(StartWorkflow),
     PublishTaskResult(PublishTaskResult),
+    Ping(Ping),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HelloWorker {
     pub worker_id: Uuid,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Ping {}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WorkerStart {
+    pub tasks: HashSet<String>,
+    pub workflows: HashSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

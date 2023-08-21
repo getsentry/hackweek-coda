@@ -1,13 +1,15 @@
-use bytes::{BufMut, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use coda_ipc::{HelloWorker, Message, RequestWorkerShutdown};
+use futures::future::{select_all, FutureExt};
 use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
-use serde::Serialize;
+use std::collections::HashSet;
+use std::mem;
 use std::process::{Child, Command};
 use std::time::Duration;
 use tempfile::TempDir;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::pipe;
 use tokio::sync::Mutex;
 use tokio::time;
@@ -21,16 +23,19 @@ pub struct Controller {
     home: TempDir,
 }
 
-struct WorkerComms {
-    rx: pipe::Receiver,
-    tx: pipe::Sender,
+#[derive(Default, Debug)]
+struct WorkerState {
+    tasks: HashSet<String>,
+    workflows: HashSet<String>,
 }
 
 /// Represents a worker process.
 pub struct Worker {
     worker_id: Uuid,
     child: Child,
-    comms: Mutex<WorkerComms>,
+    rx: Mutex<pipe::Receiver>,
+    tx: Mutex<pipe::Sender>,
+    state: Mutex<WorkerState>,
 }
 
 impl Controller {
@@ -71,7 +76,9 @@ impl Controller {
         let worker = Worker {
             worker_id,
             child,
-            comms: Mutex::new(WorkerComms { rx, tx }),
+            rx: Mutex::new(rx),
+            tx: Mutex::new(tx),
+            state: Mutex::new(WorkerState::default()),
         };
         worker
             .send_msg(Message::HelloWorker(HelloWorker { worker_id }))
@@ -92,19 +99,65 @@ impl Controller {
     pub fn iter_workers(&self) -> impl Iterator<Item = &Worker> {
         self.workers.iter()
     }
+
+    /// Runs the main communication loop.
+    pub async fn run_loop(&mut self) -> Result<(), Error> {
+        let mut worker_futures = self
+            .workers
+            .iter()
+            .map(|x| x.read_msg().boxed())
+            .collect::<Vec<_>>();
+        loop {
+            let (msg, ready_idx, mut remaining_worker_futures) =
+                select_all(mem::take(&mut worker_futures)).await;
+            self.handle_message(&self.workers[ready_idx], msg?).await?;
+            remaining_worker_futures.push(self.workers[ready_idx].read_msg().boxed());
+            worker_futures = remaining_worker_futures;
+        }
+    }
+
+    async fn handle_message(&self, worker: &Worker, msg: Message) -> Result<(), Error> {
+        event!(Level::DEBUG, "worker message {:?}", msg);
+        match msg {
+            Message::Ping(_) => {
+                println!("client sent a ping");
+            }
+            Message::WorkerStart(cmd) => {
+                let mut state = worker.state.lock().await;
+                state.tasks = cmd.tasks;
+                state.workflows = cmd.workflows;
+                event!(Level::DEBUG, "worker registered {:?}", state);
+            }
+            other => {
+                event!(Level::WARN, "unhandled message {:?}", other);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Worker {
     /// Sends a message into the worker.
-    pub async fn send_msg<S: Serialize>(&self, msg: S) -> Result<(), Error> {
+    pub async fn send_msg(&self, msg: Message) -> Result<(), Error> {
         let mut buf = Vec::<u8>::new();
         ciborium::into_writer(&msg, &mut buf).unwrap();
         let mut prefix = BytesMut::with_capacity(4);
         prefix.put_u32(buf.len() as u32);
-        let mut comms = self.comms.lock().await;
-        comms.tx.write_all(&prefix[..]).await?;
-        comms.tx.write_all(&buf[..]).await?;
+        let mut tx = self.tx.lock().await;
+        tx.write_all(&prefix[..]).await?;
+        tx.write_all(&buf[..]).await?;
         Ok(())
+    }
+
+    /// Receives a single message.
+    async fn read_msg(&self) -> Result<Message, Error> {
+        let mut bytes = [0u8; 4];
+        let mut rx = self.rx.lock().await;
+        rx.read_exact(&mut bytes).await?;
+        let len = (&bytes[..]).get_u32();
+        let mut buf = vec![0; len as usize];
+        rx.read_exact(&mut buf).await?;
+        Ok(ciborium::from_reader(&buf[..])?)
     }
 
     /// Requests the worker to shut down.
