@@ -27,7 +27,10 @@ pub enum Cmd {
     ExecuteTask(Task),
     StoreParams(StoreParams),
     GetParams(GetParams),
-    StartWorkflow(StartWorkflow),
+    PublishTaskResult(PublishTaskResult),
+    GetTaskResult(GetTaskResult),
+    SpawnWorkflow(Workflow),
+    ExecuteWorkflow(Workflow),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -55,19 +58,6 @@ pub struct WorkerDied {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct RequestWorkerShutdown {}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Task {
-    pub task_name: String,
-    pub task_id: Uuid,
-    pub task_key: Uuid,
-    pub params_id: Uuid,
-    pub workflow_run_id: Uuid,
-    pub persist_result: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct StoreParams {
     pub workflow_run_id: Uuid,
     pub params_id: Uuid,
@@ -80,8 +70,31 @@ pub struct GetParams {
     pub params_id: Uuid,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Task {
+    pub task_name: String,
+    pub task_id: Uuid,
+    pub task_key: Uuid,
+    pub params_id: Uuid,
+    pub workflow_run_id: Uuid,
+    pub persist_result: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
-pub struct StartWorkflow {
+pub struct GetTaskResult {
+    pub workflow_run_id: Uuid,
+    pub task_key: Uuid,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PublishTaskResult {
+    pub workflow_run_id: Uuid,
+    pub task_key: Uuid,
+    pub result: Value,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Workflow {
     pub workflow_name: String,
     pub workflow_run_id: Uuid,
     pub params_id: Uuid,

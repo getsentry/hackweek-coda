@@ -1,3 +1,6 @@
-[queues]
-events = ["process_event", "normalize_event", "store_event"]
+[task_queues]
+events = ["normalize_event", "store_event"]
 symbolicate = ["symbolicate"]
+
+[workflow_queues]
+events = ["process_event"]

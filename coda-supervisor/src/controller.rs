@@ -1,9 +1,8 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
 use std::ffi::OsString;
-use std::future::{poll_fn, Future};
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{anyhow, Error};
@@ -12,8 +11,6 @@ use ciborium::Value;
 use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::pipe;
@@ -25,9 +22,10 @@ use tokio::{signal, time};
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use coda_ipc::{Cmd, Event, Message, Req, Resp, Task, WorkerDied};
+use coda_ipc::{Cmd, Event, Message, Req, Resp, Task, WorkerDied, Workflow};
 
 use crate::config::Config;
+use crate::storage::{DequeuedItem, Storage};
 
 pub struct Controller {
     command: Vec<OsString>,
@@ -45,56 +43,6 @@ pub struct Controller {
 struct WorkerState {
     tasks: HashSet<String>,
     workflows: HashSet<String>,
-}
-
-#[derive(Debug, Default)]
-struct Storage {
-    params: HashMap<Uuid, Arc<BTreeMap<String, Value>>>,
-    task_queues: HashMap<String, TaskQueue>,
-}
-
-impl Storage {
-    pub fn from_config(config: &Config) -> Storage {
-        let mut task_queues = HashMap::new();
-        for queue in config.iter_queues() {
-            task_queues.insert(queue.to_string(), TaskQueue::new());
-        }
-
-        Storage {
-            params: HashMap::new(),
-            task_queues,
-        }
-    }
-
-    async fn next_queue_item(&mut self) -> (String, Task) {
-        poll_fn(move |cx: &mut Context| {
-            // TODO: better logic here
-            let mut rng = thread_rng();
-            let mut queues = self.task_queues.iter_mut().collect::<Vec<_>>();
-            queues.shuffle(&mut rng);
-            for (queue_name, task_queue) in queues {
-                match task_queue.rx.poll_recv(cx) {
-                    Poll::Ready(Some(rdy)) => return Poll::Ready((queue_name.to_string(), rdy)),
-                    _ => continue,
-                }
-            }
-            Poll::Pending
-        })
-        .await
-    }
-}
-
-#[derive(Debug)]
-struct TaskQueue {
-    tx: mpsc::Sender<Task>,
-    rx: mpsc::Receiver<Task>,
-}
-
-impl TaskQueue {
-    pub fn new() -> TaskQueue {
-        let (tx, rx) = mpsc::channel(20);
-        TaskQueue { tx, rx }
-    }
 }
 
 /// Represents a worker process.
@@ -178,7 +126,6 @@ impl Controller {
     async fn event_loop(&mut self) -> Result<(), Error> {
         loop {
             tokio::select! {
-                biased;
                 Some((worker_id, rv)) = self.worker_rx.recv() => {
                     match rv {
                         Ok(msg) => {
@@ -194,16 +141,33 @@ impl Controller {
                         }
                     }
                 }
-                (_, ref task) = self.storage.next_queue_item() => {
-                    for worker in self.workers.iter() {
-                        // XXX: this basically always gives it to the same worker
-                        // and even when the worker is busy.
-                        if worker.state.tasks.contains(&task.task_name) {
-                            self.send_msg(worker.worker_id, Message::Req(Req {
-                                request_id: None,
-                                cmd: Cmd::ExecuteTask(task.clone()),
-                            })).await?;
-                            break;
+                item = self.storage.dequeue() => {
+                    match item {
+                        DequeuedItem::Task(task) => {
+                            for worker in self.workers.iter() {
+                                // XXX: this basically always gives it to the same worker
+                                // and even when the worker is busy.
+                                if worker.state.tasks.contains(&task.task_name) {
+                                    self.send_msg(worker.worker_id, Message::Req(Req {
+                                        request_id: None,
+                                        cmd: Cmd::ExecuteTask(task),
+                                    })).await?;
+                                    break;
+                                }
+                            }
+                        }
+                        DequeuedItem::Workflow(workflow) => {
+                            for worker in self.workers.iter() {
+                                // XXX: this basically always gives it to the same worker
+                                // and even when the worker is busy.
+                                if worker.state.workflows.contains(&workflow.workflow_name) {
+                                    self.send_msg(worker.worker_id, Message::Req(Req {
+                                        request_id: None,
+                                        cmd: Cmd::ExecuteWorkflow(workflow),
+                                    })).await?;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -223,7 +187,7 @@ impl Controller {
             Message::Req(req) => {
                 let request_id = req.request_id;
                 let result = self.handle_request(worker_id, req).await?;
-                if let Some(request_id) = request_id {
+                if let (Some(result), Some(request_id)) = (result, request_id) {
                     self.send_msg(worker_id, Message::Resp(Resp { request_id, result }))
                         .await?;
                 }
@@ -247,49 +211,103 @@ impl Controller {
         Ok(())
     }
 
-    async fn handle_request(&mut self, worker_id: Uuid, req: Req) -> Result<Value, Error> {
+    async fn handle_request(&mut self, worker_id: Uuid, req: Req) -> Result<Option<Value>, Error> {
         Ok(match req.cmd {
-            Cmd::StoreParams(cmd) => {
-                self.storage
-                    .params
-                    .insert(cmd.params_id, Arc::new(cmd.params));
-                Value::Null
-            }
-            Cmd::GetParams(cmd) => match self.storage.params.get(&cmd.params_id) {
-                Some(params) => Value::Map(
-                    params
-                        .iter()
-                        .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
-                        .collect(),
-                ),
-                None => Value::Null,
-            },
-            Cmd::SpawnTask(task) => {
-                self.enqueue_task(task).await?;
-                Value::Null
-            }
             Cmd::RegisterWorker(cmd) => {
                 let worker = self.get_worker_mut(worker_id)?;
                 worker.state.tasks = cmd.tasks;
                 worker.state.workflows = cmd.workflows;
                 event!(Level::DEBUG, "worker registered {:?}", worker.state);
-                Value::Null
+                Some(Value::Null)
+            }
+            Cmd::StoreParams(cmd) => {
+                self.storage
+                    .params
+                    .insert((cmd.workflow_run_id, cmd.params_id), Arc::new(cmd.params));
+                Some(Value::Null)
+            }
+            Cmd::GetParams(cmd) => match self
+                .storage
+                .params
+                .get(&(cmd.workflow_run_id, cmd.params_id))
+            {
+                Some(params) => Some(Value::Map(
+                    params
+                        .iter()
+                        .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
+                        .collect(),
+                )),
+                None => Some(Value::Null),
+            },
+            Cmd::SpawnTask(task) => {
+                if !self
+                    .storage
+                    .has_task_result(task.workflow_run_id, task.task_key)
+                {
+                    self.enqueue_task(task).await?;
+                }
+                Some(Value::Null)
+            }
+            Cmd::GetTaskResult(cmd) => {
+                if let Some(result) = self
+                    .storage
+                    .get_task_result(cmd.workflow_run_id, cmd.task_key)
+                {
+                    Some(result)
+                } else {
+                    if let Some(request_id) = req.request_id {
+                        self.storage.notify_task_result(
+                            cmd.workflow_run_id,
+                            cmd.task_key,
+                            worker_id,
+                            request_id,
+                        );
+                        None
+                    } else {
+                        Some(Value::Null)
+                    }
+                }
+            }
+            Cmd::PublishTaskResult(cmd) => {
+                if let Some(interests) =
+                    self.storage
+                        .store_result(cmd.workflow_run_id, cmd.task_key, cmd.result.clone())
+                {
+                    for (worker_id, request_id) in interests.into_iter() {
+                        self.send_msg(
+                            worker_id,
+                            Message::Resp(Resp {
+                                request_id,
+                                result: cmd.result.clone(),
+                            }),
+                        )
+                        .await?;
+                    }
+                }
+                Some(Value::Null)
+            }
+            Cmd::SpawnWorkflow(workflow) => {
+                self.enqueue_workflow(workflow).await?;
+                Some(Value::Null)
             }
             other => {
                 event!(Level::WARN, "unhandled message {:?}", other);
-                Value::Null
+                Some(Value::Null)
             }
         })
     }
 
     async fn enqueue_task(&mut self, task: Task) -> Result<(), Error> {
         let queue_name = self.config.queue_name_for_task_name(&task.task_name);
-        let q = self
-            .storage
-            .task_queues
-            .get(queue_name)
-            .ok_or_else(|| anyhow!("could not find queue '{}'", queue_name))?;
-        q.tx.send(task).await?;
+        self.storage.enqueue_task(queue_name, task).await?;
+        Ok(())
+    }
+
+    async fn enqueue_workflow(&mut self, workflow: Workflow) -> Result<(), Error> {
+        let queue_name = self
+            .config
+            .queue_name_for_workflow_name(&workflow.workflow_name);
+        self.storage.enqueue_workflow(queue_name, workflow).await?;
         Ok(())
     }
 }

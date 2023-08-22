@@ -28,6 +28,7 @@ params_id = uuid.uuid4()
 
 idx = 0
 worker_id = None
+task = None
 try:
     while True:
         if idx == 0:
@@ -63,6 +64,10 @@ try:
         msg = read_msg()
         print('<<<', msg)
         if msg["type"] == "req" and msg["cmd"] == "execute_task":
+            task = {
+                "workflow_run_id": msg["args"]["workflow_run_id"],
+                "task_key": msg["args"]["task_key"],
+            }
             send_msg({
                 "type": "req",
                 "cmd": "get_params",
@@ -70,6 +75,16 @@ try:
                 "args": {
                     "workflow_run_id": msg["args"]["workflow_run_id"],
                     "params_id": msg["args"]["params_id"],
+                }
+            })
+        elif msg["type"] == "resp":
+            params = msg["result"]
+            send_msg({
+                "type": "req",
+                "cmd": "publish_task_result",
+                "args": {
+                    "result": "whatever",
+                    **task
                 }
             })
         idx += 1

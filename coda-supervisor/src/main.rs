@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod controller;
+mod storage;
 
 #[tokio::main]
 async fn main() {
