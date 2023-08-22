@@ -57,8 +57,15 @@ impl Controller {
         })
     }
 
+    /// Runs the controller.
+    pub async fn run(&mut self) -> Result<(), Error> {
+        self.spawn_workers().await?;
+        self.event_loop().await?;
+        Ok(())
+    }
+
     /// Spawns a given number of workers.
-    pub async fn spawn_workers(&mut self) -> Result<(), Error> {
+    async fn spawn_workers(&mut self) -> Result<(), Error> {
         let mut set = JoinSet::new();
         for _ in 0..self.target_worker_count {
             let mut cmd = Command::new(&self.command[0]);
@@ -110,7 +117,7 @@ impl Controller {
     }
 
     /// Runs the main communication loop.
-    pub async fn run_loop(&mut self) -> Result<(), Error> {
+    async fn event_loop(&mut self) -> Result<(), Error> {
         while let Some((worker_id, rv)) = self.worker_rx.recv().await {
             match rv {
                 Ok(msg) => {

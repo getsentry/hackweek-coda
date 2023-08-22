@@ -29,8 +29,7 @@ pub struct RunCommand {
 
 async fn run(cmd: RunCommand) -> Result<(), Error> {
     let mut controller = Controller::new(&cmd.args, cmd.worker_count)?;
-    controller.spawn_workers().await?;
-    controller.run_loop().await?;
+    controller.run().await?;
     Ok(())
 }
 
