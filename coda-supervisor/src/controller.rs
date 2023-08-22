@@ -20,7 +20,7 @@ use tokio::{signal, time};
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use coda_ipc::{Fail, HelloWorker, Message, Ping, WorkerDied};
+use coda_ipc::{Fail, Message, Ping, WorkerDied};
 
 pub struct Controller {
     command: Vec<OsString>,
@@ -85,16 +85,6 @@ impl Controller {
 
         while let Some(worker) = set.join_next().await {
             self.workers.push(worker??);
-        }
-
-        for worker in &self.workers {
-            self.send_msg(
-                worker.worker_id,
-                Message::HelloWorker(HelloWorker {
-                    worker_id: worker.worker_id,
-                }),
-            )
-            .await?;
         }
 
         // make one worker fail
