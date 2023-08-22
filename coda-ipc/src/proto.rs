@@ -39,7 +39,7 @@ pub struct SpawnTask {
     pub task_name: String,
     pub task_id: Uuid,
     pub task_key: Uuid,
-    pub param_id: Uuid,
+    pub params_id: Uuid,
     pub workflow_run_id: Uuid,
     pub persist_result: bool,
 }

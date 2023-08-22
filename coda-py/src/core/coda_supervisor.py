@@ -24,7 +24,7 @@ class SupervisorAPI(ABC):
         pass
 
     @abstractmethod
-    def spawn_task(self, task_name, task_id, task_key, param_id, workflow_run_id, persist_result):
+    def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
         pass
 
 
@@ -83,14 +83,14 @@ class CborSupervisorAPI(SupervisorAPI):
             }
         )
 
-    def spawn_task(self, task_name, task_id, task_key, param_id, workflow_run_id, persist_result):
+    def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
         self._write_to_pipe(
             cmd="spawn_task",
             args={
                 "task_name": task_name,
                 "task_id": task_id,
                 "task_key": task_key,
-                "param_id": param_id,
+                "params_id": params_id,
                 "workflow_run_id": workflow_run_id,
                 "persist_result": persist_result
             }
