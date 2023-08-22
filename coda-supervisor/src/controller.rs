@@ -1,25 +1,27 @@
 use bytes::{Buf, BufMut, BytesMut};
-use coda_ipc::{HelloWorker, Message, RequestWorkerShutdown};
-use futures::future::{select_all, FutureExt};
+use coda_ipc::{HelloWorker, Message};
 use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
 use std::collections::HashSet;
-use std::mem;
 use std::process::{Child, Command};
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::pipe;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, unbounded_channel};
+use tokio::sync::{Mutex, MutexGuard};
 use tokio::time;
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use anyhow::Error;
+use anyhow::{anyhow, Error};
 
 pub struct Controller {
+    cmd_template: Command,
     workers: Vec<Worker>,
+    worker_tx: mpsc::UnboundedSender<(Uuid, Result<Message, Error>)>,
+    worker_rx: mpsc::UnboundedReceiver<(Uuid, Result<Message, Error>)>,
     home: TempDir,
 }
 
@@ -32,23 +34,26 @@ struct WorkerState {
 /// Represents a worker process.
 pub struct Worker {
     worker_id: Uuid,
-    child: Child,
-    rx: Mutex<pipe::Receiver>,
     tx: Mutex<pipe::Sender>,
+    child: Child,
     state: Mutex<WorkerState>,
 }
 
 impl Controller {
     /// Creates a fresh controller.
-    pub fn new() -> Result<Controller, Error> {
+    pub fn new(cmd_template: Command) -> Result<Controller, Error> {
+        let (worker_tx, worker_rx) = unbounded_channel();
         Ok(Controller {
+            cmd_template,
             workers: Vec::new(),
+            worker_tx,
+            worker_rx,
             home: tempfile::tempdir()?,
         })
     }
 
     /// Spawns a single worker and returns the ID.
-    pub async fn spawn_worker(&mut self, cmd: &mut Command) -> Result<Uuid, Error> {
+    pub async fn spawn_worker(&mut self) -> Result<Uuid, Error> {
         let worker_id = Uuid::new_v4();
         let rx_path = self.home.path().join(format!("rx-{}.pipe", worker_id));
         let tx_path = self.home.path().join(format!("tx-{}.pipe", worker_id));
@@ -60,6 +65,7 @@ impl Controller {
 
         let rx = pipe::OpenOptions::new().open_receiver(&rx_path)?;
 
+        let cmd = &mut self.cmd_template;
         cmd.env("CODA_WORKER_WRITE_PATH", &rx_path);
         cmd.env("CODA_WORKER_READ_PATH", &tx_path);
         let child = cmd.spawn()?;
@@ -73,47 +79,74 @@ impl Controller {
             time::sleep(Duration::from_millis(50)).await;
         };
 
-        let worker = Worker {
+        self.workers.push(Worker {
             worker_id,
-            child,
-            rx: Mutex::new(rx),
             tx: Mutex::new(tx),
+            child,
             state: Mutex::new(WorkerState::default()),
-        };
-        worker
-            .send_msg(Message::HelloWorker(HelloWorker { worker_id }))
+        });
+        let rx = Mutex::new(rx);
+
+        self.send_msg(worker_id, Message::HelloWorker(HelloWorker { worker_id }))
             .await?;
-        self.workers.push(worker);
+
+        let worker_tx = self.worker_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                let msg = read_msg(&mut rx.lock().await).await;
+                let failed = msg.is_err();
+                if worker_tx.send((worker_id, msg)).is_err() || failed {
+                    break;
+                }
+            }
+        });
+
         Ok(worker_id)
     }
 
-    /// Returns a worker with a specific ID.
-    pub fn get_worker(&self, worker_id: Uuid) -> Option<&Worker> {
-        self.workers
+    /// Send a message to a worker.
+    async fn send_msg(&self, worker_id: Uuid, msg: Message) -> Result<(), Error> {
+        let worker = self
+            .workers
             .iter()
-            .filter(|x| x.worker_id == worker_id)
-            .next()
+            .find(|x| x.worker_id == worker_id)
+            .ok_or_else(|| anyhow!("cannot find worker"))?;
+        let mut tx = worker.tx.lock().await;
+        send_msg(&mut tx, msg).await
     }
 
-    /// Iterates over all workers.
-    pub fn iter_workers(&self) -> impl Iterator<Item = &Worker> {
-        self.workers.iter()
+    /// Finds a worker by worker ID.
+    fn get_worker(&self, worker_id: Uuid) -> Option<&Worker> {
+        self.workers.iter().find(|x| x.worker_id == worker_id)
+    }
+
+    /// Removes a worker
+    fn remove_worker(&mut self, worker_id: Uuid) -> Option<Worker> {
+        let idx = self.workers.iter().position(|x| x.worker_id == worker_id)?;
+        let mut worker = self.workers.remove(idx);
+        worker.child.kill().ok();
+        Some(worker)
     }
 
     /// Runs the main communication loop.
     pub async fn run_loop(&mut self) -> Result<(), Error> {
-        let mut worker_futures = self
-            .workers
-            .iter()
-            .map(|x| x.read_msg().boxed())
-            .collect::<Vec<_>>();
-        loop {
-            let (msg, ready_idx, mut remaining_worker_futures) =
-                select_all(mem::take(&mut worker_futures)).await;
-            self.handle_message(&self.workers[ready_idx], msg?).await?;
-            remaining_worker_futures.push(self.workers[ready_idx].read_msg().boxed());
-            worker_futures = remaining_worker_futures;
+        while let Some((worker_id, rv)) = self.worker_rx.recv().await {
+            match rv {
+                Ok(msg) => {
+                    if let Some(worker) = self.get_worker(worker_id) {
+                        self.handle_message(worker, msg).await?;
+                    }
+                }
+                Err(err) => {
+                    event!(Level::ERROR, "worker errored: {}", err);
+                    // kill old worker and respawn
+                    self.remove_worker(worker_id);
+                    self.spawn_worker().await?;
+                }
+            }
         }
+
+        Ok(())
     }
 
     async fn handle_message(&self, worker: &Worker, msg: Message) -> Result<(), Error> {
@@ -136,35 +169,21 @@ impl Controller {
     }
 }
 
-impl Worker {
-    /// Sends a message into the worker.
-    pub async fn send_msg(&self, msg: Message) -> Result<(), Error> {
-        let mut buf = Vec::<u8>::new();
-        ciborium::into_writer(&msg, &mut buf).unwrap();
-        let mut prefix = BytesMut::with_capacity(4);
-        prefix.put_u32(buf.len() as u32);
-        let mut tx = self.tx.lock().await;
-        tx.write_all(&prefix[..]).await?;
-        tx.write_all(&buf[..]).await?;
-        Ok(())
-    }
+async fn read_msg(rx: &mut MutexGuard<'_, pipe::Receiver>) -> Result<Message, Error> {
+    let mut bytes = [0u8; 4];
+    rx.read_exact(&mut bytes).await?;
+    let len = (&bytes[..]).get_u32();
+    let mut buf = vec![0; len as usize];
+    rx.read_exact(&mut buf).await?;
+    Ok(ciborium::from_reader(&buf[..])?)
+}
 
-    /// Receives a single message.
-    async fn read_msg(&self) -> Result<Message, Error> {
-        let mut bytes = [0u8; 4];
-        let mut rx = self.rx.lock().await;
-        rx.read_exact(&mut bytes).await?;
-        let len = (&bytes[..]).get_u32();
-        let mut buf = vec![0; len as usize];
-        rx.read_exact(&mut buf).await?;
-        Ok(ciborium::from_reader(&buf[..])?)
-    }
-
-    /// Requests the worker to shut down.
-    pub async fn request_shutdown(&self) -> Result<(), Error> {
-        event!(Level::INFO, "Worker {} requesting shutdown", self.worker_id);
-        self.send_msg(Message::RequestWorkerShutdown(RequestWorkerShutdown {}))
-            .await?;
-        Ok(())
-    }
+async fn send_msg(tx: &mut MutexGuard<'_, pipe::Sender>, msg: Message) -> Result<(), Error> {
+    let mut buf = Vec::<u8>::new();
+    ciborium::into_writer(&msg, &mut buf).unwrap();
+    let mut prefix = BytesMut::with_capacity(4);
+    prefix.put_u32(buf.len() as u32);
+    tx.write_all(&prefix[..]).await?;
+    tx.write_all(&buf[..]).await?;
+    Ok(())
 }

@@ -29,18 +29,14 @@ pub struct RunCommand {
 }
 
 async fn run(cmd: RunCommand) -> Result<(), Error> {
-    let mut controller = Controller::new()?;
     let mut c = Command::new(&cmd.args[0]);
     c.args(&cmd.args[1..]);
+    let mut controller = Controller::new(c)?;
     for _ in 0..cmd.worker_count {
-        controller.spawn_worker(&mut c).await?;
+        controller.spawn_worker().await?;
     }
 
     controller.run_loop().await?;
-
-    for worker in controller.iter_workers() {
-        worker.request_shutdown().await?;
-    }
 
     Ok(())
 }
