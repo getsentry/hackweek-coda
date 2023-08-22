@@ -37,4 +37,19 @@ impl Config {
             .with_context(|| format!("malformed config file '{}'", path.display()))?,
         })
     }
+
+    /// Returns the configured queues.
+    pub fn configured_queues(&self) -> &HashMap<String, HashSet<String>> {
+        &self.values.queues
+    }
+
+    /// Returns the queue name for a task name.
+    pub fn queue_name_for_task_name(&self, task_name: &str) -> &str {
+        for (queue, tasks) in self.values.queues.iter() {
+            if tasks.contains(task_name) {
+                return queue;
+            }
+        }
+        "default"
+    }
 }

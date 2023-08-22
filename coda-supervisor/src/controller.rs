@@ -1,11 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, bail, Error};
 use bytes::{Buf, BufMut, BytesMut};
+use ciborium::Value;
 use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
@@ -20,7 +22,10 @@ use tokio::{signal, time};
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use coda_ipc::{Fail, Message, Ping, WorkerDied};
+use coda_ipc::{Message, WorkerDied};
+
+use crate::config::Config;
+use crate::task::Task;
 
 pub struct Controller {
     command: Vec<OsString>,
@@ -30,12 +35,33 @@ pub struct Controller {
     worker_rx: mpsc::Receiver<(Uuid, Result<Message, Error>)>,
     home: TempDir,
     shutting_down: bool,
+    storage: Storage,
+    config: Config,
 }
 
 #[derive(Default, Debug)]
 struct WorkerState {
     tasks: HashSet<String>,
     workflows: HashSet<String>,
+}
+
+#[derive(Debug, Default)]
+struct Storage {
+    params: HashMap<Uuid, Arc<BTreeMap<String, Value>>>,
+    task_queues: HashMap<String, TaskQueue>,
+}
+
+#[derive(Debug)]
+struct TaskQueue {
+    tx: mpsc::Sender<Task>,
+    rx: mpsc::Receiver<Task>,
+}
+
+impl TaskQueue {
+    pub fn new() -> TaskQueue {
+        let (tx, rx) = mpsc::channel(20);
+        TaskQueue { tx, rx }
+    }
 }
 
 /// Represents a worker process.
@@ -47,7 +73,11 @@ pub struct Worker {
 
 impl Controller {
     /// Creates a fresh controller.
-    pub fn new(cmd: &[OsString], target_worker_count: usize) -> Result<Controller, Error> {
+    pub fn new(
+        cmd: &[OsString],
+        target_worker_count: usize,
+        config: Config,
+    ) -> Result<Controller, Error> {
         let (worker_tx, worker_rx) = mpsc::channel(20 * target_worker_count);
         Ok(Controller {
             command: cmd.iter().cloned().collect(),
@@ -57,6 +87,8 @@ impl Controller {
             worker_rx,
             home: tempfile::tempdir()?,
             shutting_down: false,
+            storage: Storage::default(),
+            config,
         })
     }
 
@@ -86,12 +118,6 @@ impl Controller {
         while let Some(worker) = set.join_next().await {
             self.workers.push(worker??);
         }
-
-        // make one worker fail
-        self.send_msg(self.workers[0].worker_id, Message::Fail(Fail {}))
-            .await?;
-        self.send_msg(self.workers[0].worker_id, Message::Ping(Ping {}))
-            .await?;
 
         Ok(())
     }
@@ -123,7 +149,12 @@ impl Controller {
                 Some((worker_id, rv)) = self.worker_rx.recv() => {
                     match rv {
                         Ok(msg) => {
-                            self.handle_message(worker_id, msg).await?;
+                            match self.handle_message(worker_id, msg).await {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    event!(Level::ERROR, "message handler errored: {}", err);
+                                }
+                            }
                         }
                         Err(err) => {
                             event!(Level::ERROR, "worker errored: {}", err);
@@ -153,6 +184,26 @@ impl Controller {
                     self.workers.push(self.spawn_worker().await?);
                 }
             }
+            Message::StoreParams(cmd) => {
+                self.storage
+                    .params
+                    .insert(cmd.params_id, Arc::new(cmd.params));
+            }
+            Message::SpawnTask(cmd) => {
+                let params = match self.storage.params.remove(&cmd.params_id) {
+                    Some(params) => params,
+                    None => bail!("cannot find parameters"),
+                };
+                let task = Task::new(
+                    cmd.task_name,
+                    cmd.task_id,
+                    cmd.task_key,
+                    params,
+                    cmd.workflow_run_id,
+                    cmd.persist_result,
+                );
+                self.enqueue_task(task).await?;
+            }
             Message::WorkerStart(cmd) => {
                 let worker = self.get_worker(worker_id)?;
                 let mut state = worker.state.lock().await;
@@ -164,6 +215,21 @@ impl Controller {
                 event!(Level::WARN, "unhandled message {:?}", other);
             }
         }
+        Ok(())
+    }
+
+    async fn enqueue_task(&mut self, task: Task) -> Result<(), Error> {
+        let queue_name = self.config.queue_name_for_task_name(task.name());
+        let q = match self.storage.task_queues.get(queue_name) {
+            Some(q) => q,
+            None => {
+                self.storage
+                    .task_queues
+                    .insert(queue_name.to_string(), TaskQueue::new());
+                self.storage.task_queues.get(queue_name).unwrap()
+            }
+        };
+        q.tx.send(task).await?;
         Ok(())
     }
 }
