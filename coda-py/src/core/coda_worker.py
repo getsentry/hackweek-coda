@@ -46,19 +46,33 @@ class Worker:
 
     async def _loop(self, supervisor):
         tasks = []
-        while self._signal_stop.empty():
+
+        while self._is_active():
             message = supervisor.api.get_next_message()
             new_task = asyncio.create_task(self._process_message(supervisor, message))
             tasks.append(new_task)
+            # We want to yield, in order to the task to actually run, since we are single threaded.
+            await asyncio.sleep(0.0)
 
-        await asyncio.gather(*tasks)
+        # We want to wait for all signals.
+        await asyncio.gather(self._signal_stop.get(), *tasks)
+
+    def _is_active(self):
+        return self._signal_stop.empty()
+
+    async def _stop_loop(self):
+        await self._signal_stop.put(0)
 
     async def _process_message(self, supervisor, message):
+        if message is None:
+            await self._stop_loop()
+            return
+
         handling_result = await self._handle_message(supervisor, message)
 
         # If the worker is told to stop, we immediately break out of the loop.
         if handling_result == MessageHandlingResult.STOP:
-            self._signal_stop.put(0)
+            await self._stop_loop()
         elif handling_result == MessageHandlingResult.ERROR:
             raise RuntimeError("An error happened while handling a message")
 
@@ -118,7 +132,9 @@ class Worker:
 
         # We fetch the params and run the workflow.
         workflow_params = supervisor.api.get_params(params_id)
-        await workflow_instance.run(**workflow_params)
+        result = await workflow_instance.run(**workflow_params)
+
+        print("Result of the workflow is: ", result)
 
         return MessageHandlingResult.SUCCESS
 

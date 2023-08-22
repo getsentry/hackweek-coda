@@ -20,10 +20,64 @@ class SupervisorAPI(ABC):
         pass
 
     @abstractmethod
+    def store_params(self, workflow_run_id, params_id, params):
+        pass
+
+    @abstractmethod
     def get_params(self, params_id):
         pass
 
     @abstractmethod
+    def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
+        pass
+
+
+class MockSupervisorAPI(SupervisorAPI):
+
+    def __init__(self):
+        self.messages = [
+            {
+                "cmd": "start_workflow",
+                "args": {
+                    "workflow_name": "MyWorkflow",
+                    "workflow_run_id": 10,
+                    "params_id": 1
+                }
+            },
+            {
+                "cmd": "publish_task_result",
+                "args": {
+                    "task_id": 10,
+                    "result": 100
+                }
+            }
+        ]
+        self.index = 0
+
+    def get_next_message(self):
+        if self.index >= len(self.messages):
+            return None
+
+        message = self.messages[self.index]
+        self.index += 1
+
+        return message
+
+    def register_tasks(self, tasks):
+        pass
+
+    def register_workflows(self, workflows):
+        pass
+
+    def store_params(self, workflow_run_id, params_id, params):
+        pass
+
+    def get_params(self, params_id):
+        return {
+            "a": 10,
+            "b": 20
+        }
+
     def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
         pass
 
@@ -56,7 +110,7 @@ class CborSupervisorAPI(SupervisorAPI):
 
         return cbor2.loads(bytes_vals)
 
-    def get_next_message(self):
+    async def get_next_message(self):
         return self._read_from_pipe()
 
     def register_tasks(self, tasks):
@@ -72,6 +126,16 @@ class CborSupervisorAPI(SupervisorAPI):
             cmd="register_workflows",
             args={
                 "workflows": workflows
+            }
+        )
+
+    def store_params(self, workflow_run_id, params_id, params):
+        self._write_to_pipe(
+            cmd="store_params",
+            args={
+                "workflow_run_id": workflow_run_id,
+                "params_id": params_id,
+                "params": params
             }
         )
 
@@ -100,4 +164,5 @@ class CborSupervisorAPI(SupervisorAPI):
 class Supervisor:
 
     def __init__(self, url):
-        self.api = CborSupervisorAPI(url)
+        # TODO: change later when you want to use the actual protocol.
+        self.api = MockSupervisorAPI()

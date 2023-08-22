@@ -11,4 +11,5 @@ class MyWorkflow:
             [a, b],
             {"a": a, "b": b}
         )
-        await self.context.await_one(task_handle)
+        result = await self.context.await_one(task_handle)
+        return result

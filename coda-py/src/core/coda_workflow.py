@@ -36,15 +36,16 @@ class WorkflowContext:
 
         params_id = generate_id()
 
-        self.supervisor.spawn_task(
+        self.supervisor.api.spawn_task(
             task_name,
             task_id,
             task_key,
-            params_id
-
+            params_id,
+            self.workflow_run_id,
+            persistence_key is not None
         )
 
-        return TaskHandle(task_id, task_key)
+        return TaskHandle(10, task_key)
 
     async def await_one(self, task_handle):
         result = await self.worker.register_interest(
