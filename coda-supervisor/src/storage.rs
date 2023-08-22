@@ -77,7 +77,7 @@ impl Storage {
     ///
     /// This returns the registered interests on the value and they must be notified.
     #[must_use]
-    pub fn store_result(
+    pub fn store_task_result(
         &mut self,
         workflow_run_id: Uuid,
         task_key: Uuid,

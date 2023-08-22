@@ -275,10 +275,11 @@ impl Controller {
                 }
             }
             Cmd::PublishTaskResult(cmd) => {
-                if let Some(interests) =
-                    self.storage
-                        .store_result(cmd.workflow_run_id, cmd.task_key, cmd.result.clone())
-                {
+                if let Some(interests) = self.storage.store_task_result(
+                    cmd.workflow_run_id,
+                    cmd.task_key,
+                    cmd.result.clone(),
+                ) {
                     for (worker_id, request_id) in interests.into_iter() {
                         self.send_msg(
                             worker_id,
