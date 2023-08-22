@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from enum import Enum
 
 from coda.interest import Interest, Listener
@@ -85,10 +86,10 @@ class Worker(Listener):
         if satisfied:
             return MessageHandlingResult.SUCCESS
 
-        command = message["command"]
-        if command == "execute_workflow":
+        cmd = message["cmd"]
+        if cmd == "execute_workflow":
             return await self._execute_workflow(message["args"])
-        elif command == "request_worker_shutdown":
+        elif cmd == "request_worker_shutdown":
             return MessageHandlingResult.STOP
         else:
             return MessageHandlingResult.NOT_SUPPORTED
@@ -114,8 +115,8 @@ class Worker(Listener):
 
     async def _execute_workflow(self, message):
         workflow_name = message["workflow_name"]
-        workflow_run_id = message["workflow_run_id"]
-        params_id = message["params_id"]
+        workflow_run_id = uuid.UUID(bytes=message["workflow_run_id"])
+        params_id = uuid.UUID(bytes=message["params_id"])
 
         found_workflow = None
         for supported_workflow in self.supported_workflows:

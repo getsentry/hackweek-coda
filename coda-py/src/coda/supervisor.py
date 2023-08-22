@@ -1,5 +1,6 @@
 import os
 import struct
+import uuid
 from abc import ABC, abstractmethod
 
 import cbor2
@@ -8,28 +9,27 @@ from coda.interest import Signal
 from coda.utils import generate_uuid
 
 
-def _default_message_condition(_type, request_id, command, **kwargs):
+def _default_message_condition(_type, request_id, **kwargs):
     def inner(value):
         message_type = value["type"]
         message_request_id = value.get("request_id")
-        message_command = value["command"]
 
-        return message_type == _type and message_request_id == request_id and message_command == command
+        return message_type == _type and message_request_id == request_id
 
     return inner
 
 
 class SupervisorRequest:
 
-    def __init__(self, command, request_id):
-        self.command = command
+    def __init__(self, cmd, request_id):
+        self.cmd = cmd
         self.request_id = request_id
 
 
 class SupervisorAPI(ABC):
 
     @abstractmethod
-    async def make_request(self, command, args):
+    def make_request(self, cmd, args):
         pass
 
     @abstractmethod
@@ -56,34 +56,29 @@ class MockSupervisorAPI(SupervisorAPI):
     def __init__(self):
         self.messages = [
             {
-                "type": "request",
-                "command": "execute_workflow",
+                "type": "req",
+                "cmd": "execute_workflow",
                 "args": {
                     "workflow_name": "MyWorkflow",
-                    "workflow_run_id": 10,
-                    "params_id": 1
-                }
+                    "workflow_run_id": uuid.UUID("fea61924-99f5-45f5-82c1-1082efeaa6af").bytes,
+                    "params_id": uuid.UUID("fea61924-99f5-45f5-82c1-1082efeaa6af").bytes,
+                },
             },
             {
-                "type": "response",
-                "request_id": 1,
-                "command": "get_task_result",
-                "args": {
-                    "task_id": 10,
-                    "result": 100
-                }
+                "type": "resp",
+                "request_id": uuid.UUID("fea61924-99f5-45f5-82c1-1082efeaa6af").bytes,
+                "result": 100
             }
         ]
         self.index = 0
 
-    async def make_request(self, command, args):
-        return SupervisorRequest(command=command, request_id=1)
+    def make_request(self, cmd, args):
+        return SupervisorRequest(cmd=cmd, request_id=uuid.UUID("fea61924-99f5-45f5-82c1-1082efeaa6af").bytes)
 
     def build_condition_for_response(self, request):
         return _default_message_condition(
-            _type="response",
-            request_id=request.request_id,
-            command=request.command
+            _type="resp",
+            request_id=request.request_id
         )
 
     def get_next_message(self):
@@ -95,7 +90,7 @@ class MockSupervisorAPI(SupervisorAPI):
         return message
 
     def extract_response(self, response):
-        return response["args"]["result"]
+        return response["result"]
 
 
 class CborSupervisorAPI(SupervisorAPI):
@@ -121,24 +116,24 @@ class CborSupervisorAPI(SupervisorAPI):
 
         return cbor2.loads(bytes_vals)
 
-    async def make_request(self, command, args):
+    def make_request(self, cmd, args):
         # TODO: implement actual generation of id via uuid.
-        request_id = 1
+        request_id = uuid.UUID("fea61924-99f5-45f5-82c1-1082efeaa6af").bytes
         request = {
-            "type": "request",
+            "type": "req",
             "request_id": request_id,
-            "command": command,
+            "cmd": cmd,
             "args": args,
         }
 
         self._write_to_pipe(request)
-        return SupervisorRequest(command, request_id)
+        return SupervisorRequest(cmd, request_id)
 
     def build_condition_for_response(self, request):
         return _default_message_condition(
-            _type="response",
+            _type="resp",
             request_id=request.request_id,
-            command=request.command
+            cmd=request.cmd
         )
 
     def get_next_message(self):
@@ -154,8 +149,8 @@ class Supervisor:
         self._api = MockSupervisorAPI()
         self._listener = None
 
-    async def _make_request_and_wait(self, command, args):
-        request = await self._api.make_request(command, args)
+    async def _make_request_and_wait(self, cmd, args):
+        request = self._api.make_request(cmd, args)
         if self._listener is None:
             raise RuntimeError("A listener is required in order to wait for a response")
 
@@ -169,10 +164,23 @@ class Supervisor:
         return self._api.get_next_message()
 
     def register_worker(self, tasks, workflows):
-        pass
+        self._api.make_request(
+            cmd="register_worker",
+            args={
+                "tasks": tasks,
+                "workflows": workflows
+            }
+        )
 
     def store_params(self, workflow_run_id, params_id, params):
-        pass
+        self._api.make_request(
+            cmd="store_params",
+            args={
+                "workflow_run_id": workflow_run_id.bytes,
+                "params_id": params_id.bytes,
+                "params": params,
+            }
+        )
 
     async def get_params(self, params_id):
         return {"a": 10, "b": 20}
@@ -182,7 +190,7 @@ class Supervisor:
 
     async def get_task_result(self, task_id, task_key):
         return await self._make_request_and_wait(
-            command="get_task_result",
+            cmd="get_task_result",
             args={
                 "task_id": task_id,
                 "task_key": task_key
