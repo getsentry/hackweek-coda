@@ -62,6 +62,16 @@ try:
             })
         msg = read_msg()
         print('<<<', msg)
+        if msg["type"] == "req" and msg["cmd"] == "execute_task":
+            send_msg({
+                "type": "req",
+                "cmd": "get_params",
+                "request_id": uuid.uuid4().bytes,
+                "args": {
+                    "workflow_run_id": msg["args"]["workflow_run_id"],
+                    "params_id": msg["args"]["params_id"],
+                }
+            })
         idx += 1
 except KeyboardInterrupt:
     pass
