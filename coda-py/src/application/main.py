@@ -1,8 +1,11 @@
 import asyncio
+import logging
 
 from application.workflows import my_workflow
 from coda.supervisor import Supervisor
 from coda.worker import Worker
+
+logging.basicConfig(level=logging.DEBUG)
 
 
 async def run():

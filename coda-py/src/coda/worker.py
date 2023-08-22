@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from enum import Enum
 
 from coda.workflow import WorkflowContext
@@ -8,6 +9,7 @@ class MessageHandlingResult(Enum):
     SUCCESS = 0
     ERROR = 1
     STOP = 2
+    NOT_SUPPORTED = 3
 
 
 class WorkerInterest:
@@ -45,21 +47,31 @@ class Worker:
         await self._loop()
 
     def _register(self):
+        logging.debug(f"Registering {len(self.supported_tasks)} tasks and {len(self.supported_workflows)} workflows")
         self.supervisor.api.register_tasks([task.__task_name__ for task in self.supported_tasks])
-        self.supervisor.api.register_workflows([workflow.__workflow_name__ for workflow in self.supported_workflows])
+        self.supervisor.api.register_workflows([workflow.__workflow_name__ for workflow in self.supported_tasks])
 
     async def _loop(self):
         tasks = []
 
         while self._is_active():
             message = self.supervisor.api.get_next_message()
-            new_task = asyncio.create_task(self._process_message(message))
+            logging.debug(f"Received next message {message}")
+            # We add a task name, in order to have a better way to track pending tasks.
+            task_name = f"ProcessMessage-{message['cmd'] if message is not None else None}"
+            new_task = asyncio.create_task(self._process_message(message), name=task_name)
             tasks.append(new_task)
             # We want to yield, in order to the task to actually run, since we are single threaded.
             await asyncio.sleep(0.0)
 
+        logging.debug("Collecting all pending tasks before stopping")
+        for task in tasks:
+            if not task.done():
+                logging.debug(f"Task {task.get_name()} still running")
+
         # We want to wait for all signals.
         await asyncio.gather(self._stop_signal.get(), *tasks)
+        logging.debug("Worker stopped")
 
     def _is_active(self):
         return self._stop_signal.empty()
@@ -77,8 +89,10 @@ class Worker:
         # If the worker is told to stop, we immediately break out of the loop.
         if handling_result == MessageHandlingResult.STOP:
             await self._stop_loop()
+        elif handling_result == MessageHandlingResult.NOT_SUPPORTED:
+            logging.warning(f"Message {message} is not supported")
         elif handling_result == MessageHandlingResult.ERROR:
-            raise RuntimeError("An error happened while handling a message")
+            raise RuntimeError(f"An error occurred while handling the message {message}")
 
     async def _handle_message(self, message):
         satisfied = await self._try_to_satisfy_interest(message)
@@ -86,15 +100,12 @@ class Worker:
             return MessageHandlingResult.SUCCESS
 
         cmd = message["cmd"]
-        if cmd == "hello_worker":
-            print("Hi!")
-            return MessageHandlingResult.SUCCESS
-        elif cmd == "start_workflow":
+        if cmd == "start_workflow":
             return await self._execute_workflow(message["args"])
         elif cmd == "request_worker_shutdown":
             return MessageHandlingResult.STOP
-
-        raise RuntimeError("Message not supported")
+        else:
+            return MessageHandlingResult.NOT_SUPPORTED
 
     async def _try_to_satisfy_interest(self, message):
         matching_index = None
@@ -130,13 +141,12 @@ class Worker:
             raise RuntimeError(f"Workflow {workflow_name} is not supported in this worker")
 
         # We register a workflow context, which will encapsulate the logic to drive a workflow.
-        workflow_context = WorkflowContext(self, self.supervisor, workflow_run_id)
+        workflow_context = WorkflowContext(self, self.supervisor, workflow_name, workflow_run_id)
 
         # We fetch the params and run the workflow.
         workflow_params = self.supervisor.api.get_params(params_id)
         result = await found_workflow(workflow_context, **workflow_params)
-
-        print("Result of the workflow is: ", result)
+        logging.debug(f"The workflow {workflow_name} terminated with result {result}")
 
         return MessageHandlingResult.SUCCESS
 

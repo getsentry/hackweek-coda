@@ -2,7 +2,7 @@ import hashlib
 import uuid
 
 
-def generate_id():
+def generate_uuid():
     return uuid.uuid4()
 
 

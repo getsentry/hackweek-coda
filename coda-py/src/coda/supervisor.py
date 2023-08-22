@@ -79,7 +79,7 @@ class MockSupervisorAPI(SupervisorAPI):
         }
 
     def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
-        print(task_name)
+        pass
 
 
 class CborSupervisorAPI(SupervisorAPI):
