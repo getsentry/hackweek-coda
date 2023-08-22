@@ -9,6 +9,5 @@ async def my_workflow(context, a, b):
         [a, b],
         {"a": a, "b": b}
     )
-    result = await context.await_one(task_handle)
-
+    result = await task_handle
     return result

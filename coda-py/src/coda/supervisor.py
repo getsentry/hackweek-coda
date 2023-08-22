@@ -73,7 +73,10 @@ class MockSupervisorAPI(SupervisorAPI):
         self.index = 0
 
     def make_request(self, cmd, args):
-        return SupervisorRequest(cmd=cmd, request_id=uuid.UUID("fea61924-99f5-45f5-82c1-1082efeaa6af").bytes)
+        return SupervisorRequest(
+            cmd=cmd,
+            request_id=uuid.UUID("fea61924-99f5-45f5-82c1-1082efeaa6af").bytes
+        )
 
     def build_condition_for_response(self, request):
         return _default_message_condition(
@@ -117,8 +120,7 @@ class CborSupervisorAPI(SupervisorAPI):
         return cbor2.loads(bytes_vals)
 
     def make_request(self, cmd, args):
-        # TODO: implement actual generation of id via uuid.
-        request_id = uuid.UUID("fea61924-99f5-45f5-82c1-1082efeaa6af").bytes
+        request_id = generate_uuid().bytes
         request = {
             "type": "req",
             "request_id": request_id,
@@ -183,15 +185,29 @@ class Supervisor:
         )
 
     async def get_params(self, params_id):
-        return {"a": 10, "b": 20}
+        return await self._make_request_and_wait(
+            cmd="get_params",
+            args={
+                "params_id": params_id.bytes
+            }
+        )
 
     def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
-        pass
+        self._api.make_request(
+            cmd="spawn_task",
+            args={
+                "task_name": task_name,
+                "task_id": task_id.bytes,
+                "task_key": task_key,
+                "params_id": params_id.bytes,
+                "workflow_run_id": workflow_run_id.bytes,
+                "persist_result": persist_result
+            }
+        )
 
-    async def get_task_result(self, task_id, task_key):
+    async def get_task_result(self, task_key):
         return await self._make_request_and_wait(
             cmd="get_task_result",
             args={
-                "task_id": task_id,
                 "task_key": task_key
             })
