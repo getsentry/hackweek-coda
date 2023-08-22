@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
-use std::future::Future;
+use std::future::{poll_fn, Future};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Error};
@@ -11,6 +12,8 @@ use ciborium::Value;
 use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::pipe;
@@ -51,6 +54,37 @@ struct Storage {
     task_queues: HashMap<String, TaskQueue>,
 }
 
+impl Storage {
+    pub fn from_config(config: &Config) -> Storage {
+        let mut task_queues = HashMap::new();
+        for queue in config.iter_queues() {
+            task_queues.insert(queue.to_string(), TaskQueue::new());
+        }
+
+        Storage {
+            params: HashMap::new(),
+            task_queues,
+        }
+    }
+
+    async fn next_queue_item(&mut self) -> (String, Task) {
+        poll_fn(move |cx: &mut Context| {
+            // TODO: better logic here
+            let mut rng = thread_rng();
+            let mut queues = self.task_queues.iter_mut().collect::<Vec<_>>();
+            queues.shuffle(&mut rng);
+            for (queue_name, task_queue) in queues {
+                match task_queue.rx.poll_recv(cx) {
+                    Poll::Ready(Some(rdy)) => return Poll::Ready((queue_name.to_string(), rdy)),
+                    _ => continue,
+                }
+            }
+            Poll::Pending
+        })
+        .await
+    }
+}
+
 #[derive(Debug)]
 struct TaskQueue {
     tx: mpsc::Sender<Task>,
@@ -87,7 +121,7 @@ impl Controller {
             worker_rx,
             home: tempfile::tempdir()?,
             shutting_down: false,
-            storage: Storage::default(),
+            storage: Storage::from_config(&config),
             config,
         })
     }
@@ -161,6 +195,10 @@ impl Controller {
                         }
                     }
                 }
+                (q, task) = self.storage.next_queue_item() => {
+                    // TODO: Pick a random worker
+                    // send item
+                }
                 _ = signal::ctrl_c() => {
                     self.shutting_down = true;
                     break;
@@ -220,15 +258,11 @@ impl Controller {
 
     async fn enqueue_task(&mut self, task: Task) -> Result<(), Error> {
         let queue_name = self.config.queue_name_for_task_name(task.name());
-        let q = match self.storage.task_queues.get(queue_name) {
-            Some(q) => q,
-            None => {
-                self.storage
-                    .task_queues
-                    .insert(queue_name.to_string(), TaskQueue::new());
-                self.storage.task_queues.get(queue_name).unwrap()
-            }
-        };
+        let q = self
+            .storage
+            .task_queues
+            .get(queue_name)
+            .ok_or_else(|| anyhow!("could not find queue '{}'", queue_name))?;
         q.tx.send(task).await?;
         Ok(())
     }

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use ciborium::Value;
 use uuid::Uuid;
 
+#[derive(Debug)]
 pub struct Task {
     task_name: String,
     task_id: Uuid,
