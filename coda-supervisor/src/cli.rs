@@ -4,6 +4,9 @@ use std::path::PathBuf;
 use anyhow::Error;
 use clap::{Parser, Subcommand};
 use tracing::metadata::LevelFilter;
+use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 use crate::config::Config;
 use crate::controller::Controller;
@@ -43,9 +46,11 @@ async fn run(cmd: RunCommand) -> Result<(), Error> {
 }
 
 pub async fn execute() -> Result<(), Error> {
-    tracing_subscriber::fmt()
-        .with_max_level(LevelFilter::DEBUG)
+    tracing_subscriber::registry()
+        .with(console_subscriber::spawn())
+        .with(tracing_subscriber::fmt::layer().with_filter(LevelFilter::DEBUG))
         .init();
+
     let cli = Cli::parse();
     match cli.command {
         Commands::Run(cmd) => run(cmd).await,
