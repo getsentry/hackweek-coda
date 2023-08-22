@@ -11,7 +11,9 @@ bytes = "1.4.0"
 ciborium = "0.2.1"
 clap = { version = "4.3.23", features = ["derive"] }
 coda-ipc = { version = "0.1.0", path = "../coda-ipc" }
+futures = "0.3.28"
 nix = { version = "0.26.2", features = ["fs"] }
+rand = "0.8.5"
 serde = "1.0.185"
 tempfile = "3.8.0"
 tokio = { version = "1.32.0", features = ["full"] }

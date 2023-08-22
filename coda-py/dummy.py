@@ -17,30 +17,51 @@ def read_msg():
     return cbor2.loads(bytes)
 
 
-def write_msg(cmd, args):
-    msg = cbor2.dumps({"cmd": cmd, "args": args})
+def send_msg(data):
+    msg = cbor2.dumps(data)
     tx.write(struct.pack('!i', len(msg)) + msg)
     tx.flush()
 
+
+workflow_run_id = uuid.uuid4()
+params_id = uuid.uuid4()
 
 idx = 0
 worker_id = None
 try:
     while True:
+        if idx == 0:
+            send_msg({
+                "type": "req",
+                "cmd": "worker_start",
+                "args": {
+                    "tasks": ["symbolicate", "bar", "baz"],
+                    "workflows": ["workflow_foo"],
+                }
+            })
+            send_msg({
+                "type": "req",
+                "cmd": "store_params",
+                "args": {
+                    "workflow_run_id": workflow_run_id.bytes,
+                    "params_id": params_id.bytes,
+                    "params": {"foo": "bar"},
+                }
+            })
+            send_msg({
+                "type": "req",
+                "cmd": "spawn_task",
+                "args": {
+                    "task_name": "symbolicate",
+                    "task_id": uuid.uuid4().bytes,
+                    "task_key": uuid.uuid4().bytes,
+                    "params_id": params_id.bytes,
+                    "workflow_run_id": workflow_run_id.bytes,
+                    "persist_result": True,
+                }
+            })
         msg = read_msg()
         print('<<<', msg)
-        if msg["cmd"] == "hello_worker":
-            worker_id = uuid.UUID(bytes=msg["args"]["worker_id"])
-        if msg["cmd"] == "request_worker_shutdown":
-            break
-        if msg["cmd"] == "fail":
-            raise RuntimeError()
         idx += 1
-        if idx == 1:
-            write_msg("ping", {})
-            write_msg("worker_start", {
-                "tasks": ["foo", "bar", "baz"],
-                "workflows": ["workflow_foo"],
-            })
 except KeyboardInterrupt:
     pass

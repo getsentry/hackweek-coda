@@ -38,9 +38,15 @@ impl Config {
         })
     }
 
-    /// Returns the configured queues.
-    pub fn configured_queues(&self) -> &HashMap<String, HashSet<String>> {
-        &self.values.queues
+    /// Iterates over all known queue names.
+    pub fn iter_queues(&self) -> impl Iterator<Item = &str> {
+        if self.values.queues.contains_key("default") {
+            None
+        } else {
+            Some("default")
+        }
+        .into_iter()
+        .chain(self.values.queues.keys().map(|x| x.as_str()))
     }
 
     /// Returns the queue name for a task name.

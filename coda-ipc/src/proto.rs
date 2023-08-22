@@ -5,24 +5,41 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Message {
-    RequestWorkerShutdown(RequestWorkerShutdown),
-    WorkerStart(WorkerStart),
-    WorkerDied(WorkerDied),
-    SpawnTask(SpawnTask),
-    StoreParams(StoreParams),
-    StartWorkflow(StartWorkflow),
-    PublishTaskResult(PublishTaskResult),
-    Ping(Ping),
-    Fail(Fail),
+    Req(Req),
+    Resp(Resp),
+    Event(Event),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Ping {}
+pub struct Req {
+    #[serde(flatten)]
+    pub cmd: Cmd,
+    pub request_id: Option<Uuid>,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Fail {}
+#[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
+pub enum Cmd {
+    WorkerStart(WorkerStart),
+    SpawnTask(Task),
+    RunTask(Task),
+    StoreParams(StoreParams),
+    StartWorkflow(StartWorkflow),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Resp {
+    pub request_id: Uuid,
+    pub result: Value,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Event {
+    WorkerDied(WorkerDied),
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerStart {
@@ -39,8 +56,8 @@ pub struct WorkerDied {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestWorkerShutdown {}
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SpawnTask {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Task {
     pub task_name: String,
     pub task_id: Uuid,
     pub task_key: Uuid,
@@ -70,12 +87,4 @@ pub enum TaskStatus {
     Error,
     Timeout,
     Killed,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PublishTaskResult {
-    pub task_id: Uuid,
-    pub task_key: Uuid,
-    pub result: Value,
-    pub status: TaskStatus,
 }
