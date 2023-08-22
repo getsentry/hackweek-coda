@@ -199,7 +199,7 @@ impl Controller {
                         if worker.state.tasks.contains(&task.task_name) {
                             self.send_msg(worker.worker_id, Message::Req(Req {
                                 request_id: None,
-                                cmd: Cmd::RunTask(task.clone()),
+                                cmd: Cmd::ExecuteTask(task.clone()),
                             })).await?;
                             break;
                         }

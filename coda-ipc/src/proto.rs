@@ -24,7 +24,7 @@ pub struct Req {
 pub enum Cmd {
     WorkerStart(WorkerStart),
     SpawnTask(Task),
-    RunTask(Task),
+    ExecuteTask(Task),
     StoreParams(StoreParams),
     StartWorkflow(StartWorkflow),
 }
