@@ -28,19 +28,22 @@ pub struct RunCommand {
     /// The command and it's arguments to execute as worker.
     args: Vec<OsString>,
     /// The number of workers to spawn.
-    #[arg(short = 'n', long = "worker-count", default_value = "4")]
-    worker_count: usize,
+    #[arg(short = 'n', long = "worker-count")]
+    worker_count: Option<usize>,
     /// Path to the config file.
     #[arg(short = 'c', long = "config")]
     config: Option<PathBuf>,
 }
 
 async fn run(cmd: RunCommand) -> Result<(), Error> {
-    let config = match cmd.config {
+    let mut config = match cmd.config {
         Some(ref filename) => Config::from_path(filename)?,
         None => Config::default(),
     };
-    let mut controller = Controller::new(&cmd.args, cmd.worker_count, config)?;
+    if let Some(n) = cmd.worker_count {
+        config.set_worker_count(n);
+    }
+    let mut controller = Controller::new(&cmd.args, config)?;
     controller.run().await?;
     Ok(())
 }

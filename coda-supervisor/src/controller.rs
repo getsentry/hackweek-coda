@@ -29,7 +29,6 @@ use crate::storage::{DequeuedItem, Storage};
 
 pub struct Controller {
     command: Vec<OsString>,
-    target_worker_count: usize,
     workers: Vec<Worker>,
     worker_tx: mpsc::Sender<(Uuid, Result<Message, Error>)>,
     worker_rx: mpsc::Receiver<(Uuid, Result<Message, Error>)>,
@@ -54,15 +53,10 @@ pub struct Worker {
 
 impl Controller {
     /// Creates a fresh controller.
-    pub fn new(
-        cmd: &[OsString],
-        target_worker_count: usize,
-        config: Config,
-    ) -> Result<Controller, Error> {
-        let (worker_tx, worker_rx) = mpsc::channel(20 * target_worker_count);
+    pub fn new(cmd: &[OsString], config: Config) -> Result<Controller, Error> {
+        let (worker_tx, worker_rx) = mpsc::channel(20 * config.worker_count());
         Ok(Controller {
             command: cmd.iter().cloned().collect(),
-            target_worker_count,
             workers: Vec::new(),
             worker_tx,
             worker_rx,
@@ -92,7 +86,7 @@ impl Controller {
     /// Spawns a given number of workers.
     async fn spawn_workers(&mut self) -> Result<(), Error> {
         let mut set = JoinSet::new();
-        for _ in 0..self.target_worker_count {
+        for _ in 0..self.config.worker_count() {
             set.spawn(self.spawn_worker());
         }
 

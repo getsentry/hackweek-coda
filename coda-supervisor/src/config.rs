@@ -8,9 +8,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug)]
 struct ConfigValues {
     #[serde(default)]
+    workers: WorkersConfigValues,
+    #[serde(default)]
     task_queues: HashMap<String, HashSet<String>>,
     #[serde(default)]
     workflow_queues: HashMap<String, HashSet<String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct WorkersConfigValues {
+    count: usize,
+}
+
+impl Default for WorkersConfigValues {
+    fn default() -> Self {
+        Self { count: 4 }
+    }
 }
 
 #[derive(Debug)]
@@ -22,6 +35,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             values: ConfigValues {
+                workers: WorkersConfigValues::default(),
                 task_queues: HashMap::new(),
                 workflow_queues: HashMap::new(),
             },
@@ -82,5 +96,15 @@ impl Config {
             }
         }
         "default"
+    }
+
+    /// Returns the worker count.
+    pub fn worker_count(&self) -> usize {
+        self.values.workers.count
+    }
+
+    /// Force overrides the worker count.
+    pub fn set_worker_count(&mut self, n: usize) {
+        self.values.workers.count = n;
     }
 }

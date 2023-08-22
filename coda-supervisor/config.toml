@@ -1,3 +1,6 @@
+[workers]
+count = 4
+
 [task_queues]
 events = ["normalize_event", "store_event"]
 symbolicate = ["symbolicate"]
