@@ -1,5 +1,5 @@
-import uuid
 import hashlib
+import uuid
 
 
 def generate_id():

@@ -1,8 +1,8 @@
+import os
+import struct
 from abc import ABC, abstractmethod
 
 import cbor2
-import os
-import struct
 
 
 class SupervisorAPI(ABC):
