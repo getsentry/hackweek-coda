@@ -22,6 +22,7 @@ use anyhow::{anyhow, Error};
 
 pub struct Controller {
     command: Vec<OsString>,
+    target_worker_count: usize,
     workers: Vec<Worker>,
     worker_tx: mpsc::UnboundedSender<(Uuid, Result<Message, Error>)>,
     worker_rx: mpsc::UnboundedReceiver<(Uuid, Result<Message, Error>)>,
@@ -44,10 +45,11 @@ pub struct Worker {
 
 impl Controller {
     /// Creates a fresh controller.
-    pub fn new(cmd: &[OsString]) -> Result<Controller, Error> {
+    pub fn new(cmd: &[OsString], target_worker_count: usize) -> Result<Controller, Error> {
         let (worker_tx, worker_rx) = unbounded_channel();
         Ok(Controller {
             command: cmd.iter().cloned().collect(),
+            target_worker_count,
             workers: Vec::new(),
             worker_tx,
             worker_rx,
@@ -56,14 +58,14 @@ impl Controller {
     }
 
     /// Spawns a given number of workers.
-    pub async fn spawn_workers(&mut self, count: usize) -> Result<(), Error> {
+    pub async fn spawn_workers(&mut self) -> Result<(), Error> {
         let mut set = JoinSet::new();
-        for _ in 0..count {
+        for _ in 0..self.target_worker_count {
             let mut cmd = Command::new(&self.command[0]);
             cmd.args(&self.command[1..]);
             let worker_tx = self.worker_tx.clone();
             let dir = self.home.path().to_path_buf();
-            set.spawn(async move { Ok::<_, Error>(spawn_worker(dir, cmd, worker_tx).await?) });
+            set.spawn(async move { spawn_worker(dir, cmd, worker_tx).await });
         }
 
         while let Some(worker) = set.join_next().await {
@@ -146,6 +148,7 @@ impl Controller {
     }
 }
 
+/// Spawns a worker that sends its messages into `worker_tx`.
 async fn spawn_worker(
     dir: PathBuf,
     mut cmd: Command,
