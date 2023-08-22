@@ -2,6 +2,7 @@ import asyncio
 import logging
 from enum import Enum
 
+from coda.interest import Interest, Listener
 from coda.workflow import WorkflowContext
 
 
@@ -12,24 +13,7 @@ class MessageHandlingResult(Enum):
     NOT_SUPPORTED = 3
 
 
-class WorkerInterest:
-
-    def __init__(self, cmd, condition, queue):
-        self.cmd = cmd
-        self.condition = condition
-        self.queue = queue
-
-    def matches(self, message):
-        if message["cmd"] != self.cmd:
-            return False
-
-        return self.condition(message["args"])
-
-    async def satisfy(self, value):
-        await self.queue.put(value)
-
-
-class Worker:
+class Worker(Listener):
 
     def __init__(self, supervisor, tasks, workflows):
         self.supervisor = supervisor
@@ -43,22 +27,24 @@ class Worker:
         self._stop_signal = asyncio.Queue(maxsize=1)
 
     async def run(self):
+        self.supervisor.attach_listener(self)
         self._register()
         await self._loop()
 
     def _register(self):
         logging.debug(f"Registering {len(self.supported_tasks)} tasks and {len(self.supported_workflows)} workflows")
-        self.supervisor.api.register_tasks([task.__task_name__ for task in self.supported_tasks])
-        self.supervisor.api.register_workflows([workflow.__workflow_name__ for workflow in self.supported_tasks])
+        self.supervisor.register_worker(
+            tasks=[task.__task_name__ for task in self.supported_tasks], 
+            workflows=[workflow.__workflow_name__ for workflow in self.supported_tasks]
+        )
 
     async def _loop(self):
         tasks = []
 
         while self._is_active():
-            message = self.supervisor.api.get_next_message()
+            message = self.supervisor.consume_next_message()
             logging.debug(f"Received next message {message}")
-            # We add a task name, in order to have a better way to track pending tasks.
-            task_name = f"ProcessMessage-{message['cmd'] if message is not None else None}"
+            task_name = "ProcessMessage"
             new_task = asyncio.create_task(self._process_message(message), name=task_name)
             tasks.append(new_task)
             # We want to yield, in order to the task to actually run, since we are single threaded.
@@ -99,10 +85,10 @@ class Worker:
         if satisfied:
             return MessageHandlingResult.SUCCESS
 
-        cmd = message["cmd"]
-        if cmd == "start_workflow":
+        command = message["command"]
+        if command == "execute_workflow":
             return await self._execute_workflow(message["args"])
-        elif cmd == "request_worker_shutdown":
+        elif command == "request_worker_shutdown":
             return MessageHandlingResult.STOP
         else:
             return MessageHandlingResult.NOT_SUPPORTED
@@ -120,8 +106,7 @@ class Worker:
         if matching_interest is None:
             return False
 
-        result = message["args"]["result"]
-        await matching_interest.satisfy(result)
+        await matching_interest.satisfy(message)
 
         del self._interests[matching_index]
 
@@ -144,16 +129,12 @@ class Worker:
         workflow_context = WorkflowContext(self, self.supervisor, workflow_name, workflow_run_id)
 
         # We fetch the params and run the workflow.
-        workflow_params = self.supervisor.api.get_params(params_id)
+        workflow_params = await self.supervisor.get_params(params_id)
         result = await found_workflow(workflow_context, **workflow_params)
         logging.debug(f"The workflow {workflow_name} terminated with result {result}")
 
         return MessageHandlingResult.SUCCESS
 
-    def register_interest(self, cmd, condition):
-        queue = asyncio.Queue(maxsize=1)
-
-        interest = WorkerInterest(cmd, condition, queue)
+    def listen_for(self, signal, condition):
+        interest = Interest(signal, condition)
         self._interests.append(interest)
-
-        return queue

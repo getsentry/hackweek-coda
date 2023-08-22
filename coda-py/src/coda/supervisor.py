@@ -4,32 +4,51 @@ from abc import ABC, abstractmethod
 
 import cbor2
 
+from coda.interest import Signal
+from coda.utils import generate_uuid
+
+
+def _default_message_condition(_type, request_id, command, **kwargs):
+    def inner(value):
+        message_type = value["type"]
+        message_request_id = value.get("request_id")
+        message_command = value["command"]
+
+        return message_type == _type and message_request_id == request_id and message_command == command
+
+    return inner
+
+
+class SupervisorRequest:
+
+    def __init__(self, command, request_id):
+        self.command = command
+        self.request_id = request_id
+
 
 class SupervisorAPI(ABC):
+
+    @abstractmethod
+    async def make_request(self, command, args):
+        pass
+
+    @abstractmethod
+    def build_condition_for_response(self, request):
+        pass
 
     @abstractmethod
     def get_next_message(self):
         pass
 
     @abstractmethod
-    def register_tasks(self, tasks):
+    def extract_response(self, response):
         pass
 
-    @abstractmethod
-    def register_workflows(self, workflows):
-        pass
-
-    @abstractmethod
-    def store_params(self, workflow_run_id, params_id, params):
-        pass
-
-    @abstractmethod
-    def get_params(self, params_id):
-        pass
-
-    @abstractmethod
-    def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
-        pass
+    async def get_response(self, listener, request):
+        signal = Signal()
+        listener.listen_for(signal, self.build_condition_for_response(request))
+        response = await signal.wait_for_signal()
+        return self.extract_response(response)
 
 
 class MockSupervisorAPI(SupervisorAPI):
@@ -37,7 +56,8 @@ class MockSupervisorAPI(SupervisorAPI):
     def __init__(self):
         self.messages = [
             {
-                "cmd": "start_workflow",
+                "type": "request",
+                "command": "execute_workflow",
                 "args": {
                     "workflow_name": "MyWorkflow",
                     "workflow_run_id": 10,
@@ -45,7 +65,9 @@ class MockSupervisorAPI(SupervisorAPI):
                 }
             },
             {
-                "cmd": "publish_task_result",
+                "type": "response",
+                "request_id": 1,
+                "command": "get_task_result",
                 "args": {
                     "task_id": 10,
                     "result": 100
@@ -54,48 +76,37 @@ class MockSupervisorAPI(SupervisorAPI):
         ]
         self.index = 0
 
+    async def make_request(self, command, args):
+        return SupervisorRequest(command=command, request_id=1)
+
+    def build_condition_for_response(self, request):
+        return _default_message_condition(
+            _type="response",
+            request_id=request.request_id,
+            command=request.command
+        )
+
     def get_next_message(self):
         if self.index >= len(self.messages):
             return None
 
         message = self.messages[self.index]
         self.index += 1
-
         return message
 
-    def register_tasks(self, tasks):
-        pass
-
-    def register_workflows(self, workflows):
-        pass
-
-    def store_params(self, workflow_run_id, params_id, params):
-        pass
-
-    def get_params(self, params_id):
-        return {
-            "a": 10,
-            "b": 20
-        }
-
-    def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
-        pass
+    def extract_response(self, response):
+        return response["args"]["result"]
 
 
 class CborSupervisorAPI(SupervisorAPI):
 
     def __init__(self, url):
         self.url = url
-        self.rx = open(os.environ["CODA_WORKER_READ_PATH"], "rb")
-        self.tx = open(os.environ["CODA_WORKER_WRITE_PATH"], "wb")
+        self.rx = open(os.environ.get("CODA_WORKER_READ_PATH", ""), "rb")
+        self.tx = open(os.environ.get("CODA_WORKER_WRITE_PATH", ""), "wb")
 
-    def _write_to_pipe(self, cmd, args):
-        request = {
-            "cmd": cmd,
-            "args": args
-        }
-
-        msg = cbor2.dumps(request)
+    def _write_to_pipe(self, data):
+        msg = cbor2.dumps(data)
         self.tx.write(struct.pack('!i', len(msg)))
         self.tx.write(msg)
 
@@ -110,59 +121,69 @@ class CborSupervisorAPI(SupervisorAPI):
 
         return cbor2.loads(bytes_vals)
 
-    async def get_next_message(self):
+    async def make_request(self, command, args):
+        # TODO: implement actual generation of id via uuid.
+        request_id = 1
+        request = {
+            "type": "request",
+            "request_id": request_id,
+            "command": command,
+            "args": args,
+        }
+
+        self._write_to_pipe(request)
+        return SupervisorRequest(command, request_id)
+
+    def build_condition_for_response(self, request):
+        return _default_message_condition(
+            _type="response",
+            request_id=request.request_id,
+            command=request.command
+        )
+
+    def get_next_message(self):
         return self._read_from_pipe()
 
-    def register_tasks(self, tasks):
-        self._write_to_pipe(
-            cmd="register_tasks",
-            args={
-                "tasks": tasks
-            }
-        )
-
-    def register_workflows(self, workflows):
-        self._write_to_pipe(
-            cmd="register_workflows",
-            args={
-                "workflows": workflows
-            }
-        )
-
-    def store_params(self, workflow_run_id, params_id, params):
-        self._write_to_pipe(
-            cmd="store_params",
-            args={
-                "workflow_run_id": workflow_run_id,
-                "params_id": params_id,
-                "params": params
-            }
-        )
-
-    def get_params(self, params_id):
-        self._write_to_pipe(
-            cmd="get_params",
-            args={
-                "params_id": params_id
-            }
-        )
-
-    def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
-        self._write_to_pipe(
-            cmd="spawn_task",
-            args={
-                "task_name": task_name,
-                "task_id": task_id,
-                "task_key": task_key,
-                "params_id": params_id,
-                "workflow_run_id": workflow_run_id,
-                "persist_result": persist_result
-            }
-        )
+    def extract_response(self, response):
+        return response["result"]
 
 
 class Supervisor:
 
     def __init__(self, url):
-        # TODO: change later when you want to use the actual protocol.
-        self.api = MockSupervisorAPI()
+        self._api = MockSupervisorAPI()
+        self._listener = None
+
+    async def _make_request_and_wait(self, command, args):
+        request = await self._api.make_request(command, args)
+        if self._listener is None:
+            raise RuntimeError("A listener is required in order to wait for a response")
+
+        response = await self._api.get_response(self._listener, request)
+        return response
+
+    def attach_listener(self, listener):
+        self._listener = listener
+
+    def consume_next_message(self):
+        return self._api.get_next_message()
+
+    def register_worker(self, tasks, workflows):
+        pass
+
+    def store_params(self, workflow_run_id, params_id, params):
+        pass
+
+    async def get_params(self, params_id):
+        return {"a": 10, "b": 20}
+
+    def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
+        pass
+
+    async def get_task_result(self, task_id, task_key):
+        return await self._make_request_and_wait(
+            command="get_task_result",
+            args={
+                "task_id": task_id,
+                "task_key": task_key
+            })

@@ -32,13 +32,13 @@ class WorkflowContext:
         # TODO: implement logic to fetch the result.
 
         params_id = generate_uuid()
-        self.supervisor.api.store_params(
+        self.supervisor.store_params(
             self.workflow_run_id,
             params_id,
             params
         )
 
-        self.supervisor.api.spawn_task(
+        self.supervisor.spawn_task(
             task_name,
             task_id,
             task_key,
@@ -52,9 +52,6 @@ class WorkflowContext:
 
     async def await_one(self, task_handle):
         logging.debug(f"Waiting for task {task_handle.task_id} in workflow {self.workflow_name}")
-        result = await self.worker.register_interest(
-            cmd="publish_task_result",
-            condition=lambda args: args["task_id"] == task_handle.task_id
-        ).get()
-
+        result = await self.supervisor.get_task_result(task_id=task_handle.task_id, task_key=task_handle.task_key)
+        logging.debug(f"Task {task_handle.task_id} finished with result {result}")
         return result
