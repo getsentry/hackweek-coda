@@ -1,12 +1,12 @@
-from core.coda_task import TaskHandle
-from core.coda_utils import generate_id, hash_cache_key
+from coda.task import TaskHandle
+from coda.utils import generate_id, hash_cache_key
 
 
 def coda_workflow(workflow_name):
-    def decorator(cls):
-        cls.__workflow_name__ = workflow_name
+    def decorator(func):
+        func.__workflow_name__ = workflow_name
 
-        return cls
+        return func
 
     return decorator
 

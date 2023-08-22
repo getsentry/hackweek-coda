@@ -240,4 +240,4 @@ def main():
         tasks=[task1.task1, task2.task2],
         workflow=[workflow1.workflow1],
     )
-    registry.run_with_supervisor()
+    registry.run()

@@ -1,8 +1,8 @@
 import asyncio
 
-from application.workflows import MyWorkflow
-from core.coda_supervisor import Supervisor
-from core.coda_worker import Worker
+from application.workflows import my_workflow
+from coda.supervisor import Supervisor
+from coda.worker import Worker
 
 
 async def run():
@@ -10,8 +10,8 @@ async def run():
     url = "localhost:2233"
     supervisor = Supervisor(url)
 
-    worker = Worker(tasks=[], workflows=[MyWorkflow])
-    await worker.run_with_supervisor(supervisor)
+    worker = Worker(supervisor=supervisor, tasks=[], workflows=[my_workflow])
+    await worker.run()
 
 
 if __name__ == '__main__':
