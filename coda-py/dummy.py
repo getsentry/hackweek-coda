@@ -33,6 +33,8 @@ try:
             worker_id = uuid.UUID(bytes=msg["args"]["worker_id"])
         if msg["cmd"] == "request_worker_shutdown":
             break
+        if msg["cmd"] == "fail":
+            raise RuntimeError()
         idx += 1
         if idx == 1:
             write_msg("ping", {})

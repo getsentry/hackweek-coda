@@ -7,28 +7,33 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
 pub enum Message {
-    HelloWorker(HelloWorker),
     RequestWorkerShutdown(RequestWorkerShutdown),
     WorkerStart(WorkerStart),
+    WorkerDied(WorkerDied),
     SpawnTask(SpawnTask),
     StoreParams(StoreParams),
     StartWorkflow(StartWorkflow),
     PublishTaskResult(PublishTaskResult),
     Ping(Ping),
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct HelloWorker {
-    pub worker_id: Uuid,
+    Fail(Fail),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Ping {}
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct Fail {}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerStart {
     pub tasks: HashSet<String>,
     pub workflows: HashSet<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WorkerDied {
+    pub worker_id: Uuid,
+    pub status: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

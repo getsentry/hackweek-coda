@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 use anyhow::Error;
 use clap::{Parser, Subcommand};
@@ -25,6 +26,9 @@ pub struct RunCommand {
     /// The number of workers to spawn.
     #[arg(short = 'n', long = "worker-count", default_value = "4")]
     worker_count: usize,
+    /// Path to the config file.
+    #[arg(short = 'c', long = "config")]
+    config: Option<PathBuf>,
 }
 
 async fn run(cmd: RunCommand) -> Result<(), Error> {
