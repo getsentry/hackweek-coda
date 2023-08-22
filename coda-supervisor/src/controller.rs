@@ -11,7 +11,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::pipe;
-use tokio::sync::mpsc::{self, unbounded_channel};
+use tokio::sync::mpsc;
 use tokio::sync::{Mutex, MutexGuard};
 use tokio::task::JoinSet;
 use tokio::time;
@@ -24,8 +24,8 @@ pub struct Controller {
     command: Vec<OsString>,
     target_worker_count: usize,
     workers: Vec<Worker>,
-    worker_tx: mpsc::UnboundedSender<(Uuid, Result<Message, Error>)>,
-    worker_rx: mpsc::UnboundedReceiver<(Uuid, Result<Message, Error>)>,
+    worker_tx: mpsc::Sender<(Uuid, Result<Message, Error>)>,
+    worker_rx: mpsc::Receiver<(Uuid, Result<Message, Error>)>,
     home: TempDir,
 }
 
@@ -46,7 +46,7 @@ pub struct Worker {
 impl Controller {
     /// Creates a fresh controller.
     pub fn new(cmd: &[OsString], target_worker_count: usize) -> Result<Controller, Error> {
-        let (worker_tx, worker_rx) = unbounded_channel();
+        let (worker_tx, worker_rx) = mpsc::channel(20 * target_worker_count);
         Ok(Controller {
             command: cmd.iter().cloned().collect(),
             target_worker_count,
@@ -159,7 +159,7 @@ impl Controller {
 async fn spawn_worker(
     dir: PathBuf,
     mut cmd: Command,
-    worker_tx: mpsc::UnboundedSender<(Uuid, Result<Message, Error>)>,
+    worker_tx: mpsc::Sender<(Uuid, Result<Message, Error>)>,
 ) -> Result<Worker, Error> {
     let worker_id = Uuid::new_v4();
     let rx_path = dir.join(format!("rx-{}.pipe", worker_id));
@@ -198,7 +198,7 @@ async fn spawn_worker(
         loop {
             let msg = read_msg(&mut rx.lock().await).await;
             let failed = msg.is_err();
-            if worker_tx.send((worker_id, msg)).is_err() || failed {
+            if worker_tx.send((worker_id, msg)).await.is_err() || failed {
                 break;
             }
         }
