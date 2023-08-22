@@ -26,6 +26,7 @@ pub enum Cmd {
     SpawnTask(Task),
     ExecuteTask(Task),
     StoreParams(StoreParams),
+    GetParams(GetParams),
     StartWorkflow(StartWorkflow),
 }
 
@@ -71,6 +72,12 @@ pub struct StoreParams {
     pub workflow_run_id: Uuid,
     pub params_id: Uuid,
     pub params: BTreeMap<String, Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GetParams {
+    pub workflow_run_id: Uuid,
+    pub params_id: Uuid,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
