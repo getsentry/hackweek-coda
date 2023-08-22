@@ -196,6 +196,8 @@ impl Controller {
                 }
                 (_, ref task) = self.storage.next_queue_item() => {
                     for worker in self.workers.iter() {
+                        // XXX: this basically always gives it to the same worker
+                        // and even when the worker is busy.
                         if worker.state.tasks.contains(&task.task_name) {
                             self.send_msg(worker.worker_id, Message::Req(Req {
                                 request_id: None,
@@ -246,26 +248,38 @@ impl Controller {
     }
 
     async fn handle_request(&mut self, worker_id: Uuid, req: Req) -> Result<Value, Error> {
-        match req.cmd {
+        Ok(match req.cmd {
             Cmd::StoreParams(cmd) => {
                 self.storage
                     .params
                     .insert(cmd.params_id, Arc::new(cmd.params));
+                Value::Null
             }
+            Cmd::GetParams(cmd) => match self.storage.params.get(&cmd.params_id) {
+                Some(params) => Value::Map(
+                    params
+                        .iter()
+                        .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
+                        .collect(),
+                ),
+                None => Value::Null,
+            },
             Cmd::SpawnTask(task) => {
                 self.enqueue_task(task).await?;
+                Value::Null
             }
             Cmd::RegisterWorker(cmd) => {
                 let worker = self.get_worker_mut(worker_id)?;
                 worker.state.tasks = cmd.tasks;
                 worker.state.workflows = cmd.workflows;
                 event!(Level::DEBUG, "worker registered {:?}", worker.state);
+                Value::Null
             }
             other => {
                 event!(Level::WARN, "unhandled message {:?}", other);
+                Value::Null
             }
-        }
-        Ok(Value::Null)
+        })
     }
 
     async fn enqueue_task(&mut self, task: Task) -> Result<(), Error> {
