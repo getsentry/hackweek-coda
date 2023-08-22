@@ -4,11 +4,7 @@ from core.coda_utils import generate_id, hash_cache_key
 
 def coda_workflow(workflow_name):
     def decorator(cls):
-        def set_context(self, context):
-            self.context = context
-
         cls.__workflow_name__ = workflow_name
-        cls.set_context = set_context
 
         return cls
 

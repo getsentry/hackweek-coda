@@ -128,11 +128,10 @@ class Worker:
         workflow_context = WorkflowContext(self, supervisor, workflow_run_id)
 
         workflow_instance = found_workflow()
-        workflow_instance.set_context(workflow_context)
 
         # We fetch the params and run the workflow.
         workflow_params = supervisor.api.get_params(params_id)
-        result = await workflow_instance.run(**workflow_params)
+        result = await workflow_instance.run(workflow_context, **workflow_params)
 
         print("Result of the workflow is: ", result)
 

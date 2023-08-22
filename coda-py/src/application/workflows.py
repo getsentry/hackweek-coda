@@ -5,11 +5,12 @@ from core.coda_workflow import coda_workflow
 @coda_workflow(workflow_name="MyWorkflow")
 class MyWorkflow:
 
-    async def run(self, a, b):
-        task_handle = self.context.spawn_task(
+    async def run(self, context, a, b):
+        task_handle = context.spawn_task(
             sum_two_numbers,
             [a, b],
             {"a": a, "b": b}
         )
-        result = await self.context.await_one(task_handle)
+        result = await context.await_one(task_handle)
+
         return result
