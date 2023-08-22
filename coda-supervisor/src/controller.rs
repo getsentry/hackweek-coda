@@ -4,6 +4,8 @@ use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
 use std::collections::HashSet;
+use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -11,6 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::pipe;
 use tokio::sync::mpsc::{self, unbounded_channel};
 use tokio::sync::{Mutex, MutexGuard};
+use tokio::task::JoinSet;
 use tokio::time;
 use tracing::{event, Level};
 use uuid::Uuid;
@@ -18,7 +21,7 @@ use uuid::Uuid;
 use anyhow::{anyhow, Error};
 
 pub struct Controller {
-    cmd_template: Command,
+    command: Vec<OsString>,
     workers: Vec<Worker>,
     worker_tx: mpsc::UnboundedSender<(Uuid, Result<Message, Error>)>,
     worker_rx: mpsc::UnboundedReceiver<(Uuid, Result<Message, Error>)>,
@@ -41,10 +44,10 @@ pub struct Worker {
 
 impl Controller {
     /// Creates a fresh controller.
-    pub fn new(cmd_template: Command) -> Result<Controller, Error> {
+    pub fn new(cmd: &[OsString]) -> Result<Controller, Error> {
         let (worker_tx, worker_rx) = unbounded_channel();
         Ok(Controller {
-            cmd_template,
+            command: cmd.iter().cloned().collect(),
             workers: Vec::new(),
             worker_tx,
             worker_rx,
@@ -52,56 +55,32 @@ impl Controller {
         })
     }
 
-    /// Spawns a single worker and returns the ID.
-    pub async fn spawn_worker(&mut self) -> Result<Uuid, Error> {
-        let worker_id = Uuid::new_v4();
-        let rx_path = self.home.path().join(format!("rx-{}.pipe", worker_id));
-        let tx_path = self.home.path().join(format!("tx-{}.pipe", worker_id));
+    /// Spawns a given number of workers.
+    pub async fn spawn_workers(&mut self, count: usize) -> Result<(), Error> {
+        let mut set = JoinSet::new();
+        for _ in 0..count {
+            let mut cmd = Command::new(&self.command[0]);
+            cmd.args(&self.command[1..]);
+            let worker_tx = self.worker_tx.clone();
+            let dir = self.home.path().to_path_buf();
+            set.spawn(async move { Ok::<_, Error>(spawn_worker(dir, cmd, worker_tx).await?) });
+        }
 
-        event!(Level::INFO, "Worker {} spawning", worker_id);
+        while let Some(worker) = set.join_next().await {
+            self.workers.push(worker??);
+        }
 
-        mkfifo(&rx_path, stat::Mode::S_IRWXU)?;
-        mkfifo(&tx_path, stat::Mode::S_IRWXU)?;
-
-        let rx = pipe::OpenOptions::new().open_receiver(&rx_path)?;
-
-        let cmd = &mut self.cmd_template;
-        cmd.env("CODA_WORKER_WRITE_PATH", &rx_path);
-        cmd.env("CODA_WORKER_READ_PATH", &tx_path);
-        let child = cmd.spawn()?;
-
-        let tx = loop {
-            match pipe::OpenOptions::new().open_sender(&tx_path) {
-                Ok(tx) => break tx,
-                Err(e) if e.raw_os_error() == Some(ENXIO) => {}
-                Err(e) => return Err(e.into()),
-            }
-            time::sleep(Duration::from_millis(50)).await;
-        };
-
-        self.workers.push(Worker {
-            worker_id,
-            tx: Mutex::new(tx),
-            child,
-            state: Mutex::new(WorkerState::default()),
-        });
-        let rx = Mutex::new(rx);
-
-        self.send_msg(worker_id, Message::HelloWorker(HelloWorker { worker_id }))
+        for worker in &self.workers {
+            self.send_msg(
+                worker.worker_id,
+                Message::HelloWorker(HelloWorker {
+                    worker_id: worker.worker_id,
+                }),
+            )
             .await?;
+        }
 
-        let worker_tx = self.worker_tx.clone();
-        tokio::spawn(async move {
-            loop {
-                let msg = read_msg(&mut rx.lock().await).await;
-                let failed = msg.is_err();
-                if worker_tx.send((worker_id, msg)).is_err() || failed {
-                    break;
-                }
-            }
-        });
-
-        Ok(worker_id)
+        Ok(())
     }
 
     /// Send a message to a worker.
@@ -139,9 +118,7 @@ impl Controller {
                 }
                 Err(err) => {
                     event!(Level::ERROR, "worker errored: {}", err);
-                    // kill old worker and respawn
                     self.remove_worker(worker_id);
-                    self.spawn_worker().await?;
                 }
             }
         }
@@ -167,6 +144,57 @@ impl Controller {
         }
         Ok(())
     }
+}
+
+async fn spawn_worker(
+    dir: PathBuf,
+    mut cmd: Command,
+    worker_tx: mpsc::UnboundedSender<(Uuid, Result<Message, Error>)>,
+) -> Result<Worker, Error> {
+    let worker_id = Uuid::new_v4();
+    let rx_path = dir.join(format!("rx-{}.pipe", worker_id));
+    let tx_path = dir.join(format!("tx-{}.pipe", worker_id));
+
+    event!(Level::INFO, "Worker {} spawning", worker_id);
+
+    mkfifo(&rx_path, stat::Mode::S_IRWXU)?;
+    mkfifo(&tx_path, stat::Mode::S_IRWXU)?;
+
+    let rx = pipe::OpenOptions::new().open_receiver(&rx_path)?;
+
+    cmd.env("CODA_WORKER_WRITE_PATH", &rx_path);
+    cmd.env("CODA_WORKER_READ_PATH", &tx_path);
+    let child = cmd.spawn()?;
+
+    let tx = loop {
+        match pipe::OpenOptions::new().open_sender(&tx_path) {
+            Ok(tx) => break tx,
+            Err(e) if e.raw_os_error() == Some(ENXIO) => {}
+            Err(e) => return Err(e.into()),
+        }
+        time::sleep(Duration::from_millis(50)).await;
+    };
+
+    let worker = Worker {
+        worker_id,
+        tx: Mutex::new(tx),
+        child,
+        state: Mutex::new(WorkerState::default()),
+    };
+    let rx = Mutex::new(rx);
+
+    let worker_tx = worker_tx.clone();
+    tokio::spawn(async move {
+        loop {
+            let msg = read_msg(&mut rx.lock().await).await;
+            let failed = msg.is_err();
+            if worker_tx.send((worker_id, msg)).is_err() || failed {
+                break;
+            }
+        }
+    });
+
+    Ok(worker)
 }
 
 async fn read_msg(rx: &mut MutexGuard<'_, pipe::Receiver>) -> Result<Message, Error> {
