@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Error};
+use anyhow::{anyhow, Error};
 use bytes::{Buf, BufMut, BytesMut};
 use ciborium::Value;
 use nix::libc::ENXIO;
@@ -25,7 +25,7 @@ use tokio::{signal, time};
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use coda_ipc::{Message, Task, WorkerDied};
+use coda_ipc::{Cmd, Event, Message, Req, Resp, Task, WorkerDied};
 
 use crate::config::Config;
 
@@ -167,14 +167,6 @@ impl Controller {
     }
 
     /// Finds a worker by worker ID.
-    fn get_worker(&self, worker_id: Uuid) -> Result<&Worker, Error> {
-        self.workers
-            .iter()
-            .find(|x| x.worker_id == worker_id)
-            .ok_or_else(|| anyhow!("worker '{}' is gone", worker_id))
-    }
-
-    /// Finds a worker by worker ID.
     fn get_worker_mut(&mut self, worker_id: Uuid) -> Result<&mut Worker, Error> {
         self.workers
             .iter_mut()
@@ -205,7 +197,10 @@ impl Controller {
                 (_, ref task) = self.storage.next_queue_item() => {
                     for worker in self.workers.iter() {
                         if worker.state.tasks.contains(&task.task_name) {
-                            self.send_msg(worker.worker_id, Message::RunTask(task.clone())).await?;
+                            self.send_msg(worker.worker_id, Message::Req(Req {
+                                request_id: None,
+                                cmd: Cmd::RunTask(task.clone()),
+                            })).await?;
                             break;
                         }
                     }
@@ -223,22 +218,44 @@ impl Controller {
     async fn handle_message(&mut self, worker_id: Uuid, msg: Message) -> Result<(), Error> {
         event!(Level::DEBUG, "worker message {:?}", msg);
         match msg {
-            Message::WorkerDied(cmd) => {
+            Message::Req(req) => {
+                let request_id = req.request_id;
+                let result = self.handle_request(worker_id, req).await?;
+                if let Some(request_id) = request_id {
+                    self.send_msg(worker_id, Message::Resp(Resp { request_id, result }))
+                        .await?;
+                }
+                Ok(())
+            }
+            Message::Resp(_resp) => Ok(()),
+            Message::Event(event) => self.handle_event(worker_id, event).await,
+        }
+    }
+
+    async fn handle_event(&mut self, worker_id: Uuid, event: Event) -> Result<(), Error> {
+        match event {
+            Event::WorkerDied(cmd) => {
                 println!("worker {} died (status = {:?})", cmd.worker_id, cmd.status);
                 self.workers.retain(|x| x.worker_id != worker_id);
                 if !self.shutting_down {
                     self.workers.push(self.spawn_worker().await?);
                 }
             }
-            Message::StoreParams(cmd) => {
+        }
+        Ok(())
+    }
+
+    async fn handle_request(&mut self, worker_id: Uuid, req: Req) -> Result<Value, Error> {
+        match req.cmd {
+            Cmd::StoreParams(cmd) => {
                 self.storage
                     .params
                     .insert(cmd.params_id, Arc::new(cmd.params));
             }
-            Message::SpawnTask(task) => {
+            Cmd::SpawnTask(task) => {
                 self.enqueue_task(task).await?;
             }
-            Message::WorkerStart(cmd) => {
+            Cmd::WorkerStart(cmd) => {
                 let worker = self.get_worker_mut(worker_id)?;
                 worker.state.tasks = cmd.tasks;
                 worker.state.workflows = cmd.workflows;
@@ -248,7 +265,7 @@ impl Controller {
                 event!(Level::WARN, "unhandled message {:?}", other);
             }
         }
-        Ok(())
+        Ok(Value::Null)
     }
 
     async fn enqueue_task(&mut self, task: Task) -> Result<(), Error> {
@@ -323,7 +340,10 @@ async fn spawn_worker(
             mainloop_tx
                 .send((
                     worker_id,
-                    Ok(Message::WorkerDied(WorkerDied { worker_id, status })),
+                    Ok(Message::Event(Event::WorkerDied(WorkerDied {
+                        worker_id,
+                        status,
+                    }))),
                 ))
                 .await
                 .ok();

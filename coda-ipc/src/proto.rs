@@ -5,16 +5,40 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Message {
-    RequestWorkerShutdown(RequestWorkerShutdown),
+    Req(Req),
+    Resp(Resp),
+    Event(Event),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Req {
+    #[serde(flatten)]
+    pub cmd: Cmd,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
+pub enum Cmd {
     WorkerStart(WorkerStart),
-    WorkerDied(WorkerDied),
     SpawnTask(Task),
     RunTask(Task),
     StoreParams(StoreParams),
     StartWorkflow(StartWorkflow),
-    PublishTaskResult(PublishTaskResult),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Resp {
+    pub request_id: Uuid,
+    pub result: Value,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Event {
+    WorkerDied(WorkerDied),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -63,12 +87,4 @@ pub enum TaskStatus {
     Error,
     Timeout,
     Killed,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PublishTaskResult {
-    pub task_id: Uuid,
-    pub task_key: Uuid,
-    pub result: Value,
-    pub status: TaskStatus,
 }
