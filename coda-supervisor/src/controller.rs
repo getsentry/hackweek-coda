@@ -255,7 +255,7 @@ impl Controller {
             Cmd::SpawnTask(task) => {
                 self.enqueue_task(task).await?;
             }
-            Cmd::WorkerStart(cmd) => {
+            Cmd::RegisterWorker(cmd) => {
                 let worker = self.get_worker_mut(worker_id)?;
                 worker.state.tasks = cmd.tasks;
                 worker.state.workflows = cmd.workflows;

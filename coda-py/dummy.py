@@ -33,7 +33,7 @@ try:
         if idx == 0:
             send_msg({
                 "type": "req",
-                "cmd": "worker_start",
+                "cmd": "register_worker",
                 "args": {
                     "tasks": ["symbolicate", "bar", "baz"],
                     "workflows": ["workflow_foo"],
