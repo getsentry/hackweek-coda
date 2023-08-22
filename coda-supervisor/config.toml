@@ -1,0 +1,3 @@
+[queues]
+events = ["process_event", "normalize_event", "store_event"]
+symbolicate = ["symbolicate"]

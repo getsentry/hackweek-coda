@@ -5,6 +5,7 @@ use anyhow::Error;
 use clap::{Parser, Subcommand};
 use tracing::metadata::LevelFilter;
 
+use crate::config::Config;
 use crate::controller::Controller;
 
 #[derive(Parser, Debug)]
@@ -32,7 +33,11 @@ pub struct RunCommand {
 }
 
 async fn run(cmd: RunCommand) -> Result<(), Error> {
-    let mut controller = Controller::new(&cmd.args, cmd.worker_count)?;
+    let config = match cmd.config {
+        Some(ref filename) => Config::from_path(filename)?,
+        None => Config::default(),
+    };
+    let mut controller = Controller::new(&cmd.args, cmd.worker_count, config)?;
     controller.run().await?;
     Ok(())
 }
