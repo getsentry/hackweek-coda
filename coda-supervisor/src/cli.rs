@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-use std::process::Command;
+use std::ffi::OsString;
 
 use anyhow::Error;
 use clap::{Parser, Subcommand};
@@ -22,26 +21,15 @@ enum Commands {
 #[derive(Parser, Debug)]
 pub struct RunCommand {
     /// The command and it's arguments to execute as worker.
-    args: Vec<PathBuf>,
+    args: Vec<OsString>,
     /// The number of workers to spawn.
     #[arg(short = 'n', long = "worker-count", default_value = "4")]
     worker_count: usize,
 }
 
 async fn run(cmd: RunCommand) -> Result<(), Error> {
-    let mut controller = Controller::new()?;
-    let mut c = Command::new(&cmd.args[0]);
-    c.args(&cmd.args[1..]);
-    for _ in 0..cmd.worker_count {
-        controller.spawn_worker(&mut c).await?;
-    }
-
-    controller.run_loop().await?;
-
-    for worker in controller.iter_workers() {
-        worker.request_shutdown().await?;
-    }
-
+    let mut controller = Controller::new(&cmd.args, cmd.worker_count)?;
+    controller.run().await?;
     Ok(())
 }
 
