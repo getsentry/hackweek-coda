@@ -199,7 +199,7 @@ impl Controller {
                         if worker.state.tasks.contains(&task.task_name) {
                             self.send_msg(worker.worker_id, Message::Req(Req {
                                 request_id: None,
-                                cmd: Cmd::RunTask(task.clone()),
+                                cmd: Cmd::ExecuteTask(task.clone()),
                             })).await?;
                             break;
                         }
@@ -255,7 +255,7 @@ impl Controller {
             Cmd::SpawnTask(task) => {
                 self.enqueue_task(task).await?;
             }
-            Cmd::WorkerStart(cmd) => {
+            Cmd::RegisterWorker(cmd) => {
                 let worker = self.get_worker_mut(worker_id)?;
                 worker.state.tasks = cmd.tasks;
                 worker.state.workflows = cmd.workflows;

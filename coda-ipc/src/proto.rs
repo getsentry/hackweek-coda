@@ -22,9 +22,9 @@ pub struct Req {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "cmd", content = "args", rename_all = "snake_case")]
 pub enum Cmd {
-    WorkerStart(WorkerStart),
+    RegisterWorker(RegisterWorker),
     SpawnTask(Task),
-    RunTask(Task),
+    ExecuteTask(Task),
     StoreParams(StoreParams),
     StartWorkflow(StartWorkflow),
 }
@@ -42,7 +42,7 @@ pub enum Event {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WorkerStart {
+pub struct RegisterWorker {
     pub tasks: HashSet<String>,
     pub workflows: HashSet<String>,
 }
