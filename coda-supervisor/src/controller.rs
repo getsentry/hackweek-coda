@@ -126,58 +126,64 @@ impl Controller {
     async fn event_loop(&mut self) -> Result<(), Error> {
         loop {
             tokio::select! {
-                Some((worker_id, rv)) = self.worker_rx.recv() => {
-                    match rv {
-                        Ok(msg) => {
-                            match self.handle_message(worker_id, msg).await {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    event!(Level::ERROR, "message handler errored: {}", err);
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            event!(Level::ERROR, "worker errored: {}", err);
-                        }
-                    }
-                }
-                item = self.storage.dequeue() => {
-                    match item {
-                        DequeuedItem::Task(task) => {
-                            for worker in self.workers.iter() {
-                                // XXX: this basically always gives it to the same worker
-                                // and even when the worker is busy.
-                                if worker.state.tasks.contains(&task.task_name) {
-                                    self.send_msg(worker.worker_id, Message::Req(Req {
-                                        request_id: None,
-                                        cmd: Cmd::ExecuteTask(task),
-                                    })).await?;
-                                    break;
-                                }
-                            }
-                        }
-                        DequeuedItem::Workflow(workflow) => {
-                            for worker in self.workers.iter() {
-                                // XXX: this basically always gives it to the same worker
-                                // and even when the worker is busy.
-                                if worker.state.workflows.contains(&workflow.workflow_name) {
-                                    self.send_msg(worker.worker_id, Message::Req(Req {
-                                        request_id: None,
-                                        cmd: Cmd::ExecuteWorkflow(workflow),
-                                    })).await?;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
+                biased;
                 _ = signal::ctrl_c() => {
                     self.shutting_down = true;
                     break;
                 }
+                _ = self.event_loop_iterate() => {}
             }
         }
 
+        Ok(())
+    }
+
+    async fn event_loop_iterate(&mut self) -> Result<(), Error> {
+        tokio::select! {
+            Some((worker_id, rv)) = self.worker_rx.recv() => {
+                match rv {
+                    Ok(msg) => {
+                        match self.handle_message(worker_id, msg).await {
+                            Ok(()) => {}
+                            Err(err) => {
+                                event!(Level::ERROR, "message handler errored: {}", err);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        event!(Level::ERROR, "worker errored: {}", err);
+                    }
+                }
+            }
+            item = self.storage.dequeue() => {
+                // XXX: this basically always gives it to the same worker
+                // and even when the worker is busy.
+                match item {
+                    DequeuedItem::Task(task) => {
+                        for worker in self.workers.iter() {
+                            if worker.state.tasks.contains(&task.task_name) {
+                                self.send_msg(worker.worker_id, Message::Req(Req {
+                                    request_id: None,
+                                    cmd: Cmd::ExecuteTask(task),
+                                })).await?;
+                                break;
+                            }
+                        }
+                    }
+                    DequeuedItem::Workflow(workflow) => {
+                        for worker in self.workers.iter() {
+                            if worker.state.workflows.contains(&workflow.workflow_name) {
+                                self.send_msg(worker.worker_id, Message::Req(Req {
+                                    request_id: None,
+                                    cmd: Cmd::ExecuteWorkflow(workflow),
+                                })).await?;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
