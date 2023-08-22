@@ -1,7 +1,6 @@
 mod cli;
 mod config;
 mod controller;
-mod task;
 
 #[tokio::main]
 async fn main() {

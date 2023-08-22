@@ -10,19 +10,12 @@ pub enum Message {
     RequestWorkerShutdown(RequestWorkerShutdown),
     WorkerStart(WorkerStart),
     WorkerDied(WorkerDied),
-    SpawnTask(SpawnTask),
+    SpawnTask(Task),
+    RunTask(Task),
     StoreParams(StoreParams),
     StartWorkflow(StartWorkflow),
     PublishTaskResult(PublishTaskResult),
-    Ping(Ping),
-    Fail(Fail),
 }
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Ping {}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Fail {}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerStart {
@@ -39,8 +32,8 @@ pub struct WorkerDied {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestWorkerShutdown {}
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SpawnTask {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Task {
     pub task_name: String,
     pub task_id: Uuid,
     pub task_key: Uuid,

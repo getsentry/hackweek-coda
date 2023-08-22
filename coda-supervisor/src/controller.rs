@@ -25,10 +25,9 @@ use tokio::{signal, time};
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use coda_ipc::{Message, WorkerDied};
+use coda_ipc::{Message, Task, WorkerDied};
 
 use crate::config::Config;
-use crate::task::Task;
 
 pub struct Controller {
     command: Vec<OsString>,
@@ -102,7 +101,7 @@ impl TaskQueue {
 pub struct Worker {
     worker_id: Uuid,
     tx: Mutex<pipe::Sender>,
-    state: Mutex<WorkerState>,
+    state: WorkerState,
 }
 
 impl Controller {
@@ -175,6 +174,14 @@ impl Controller {
             .ok_or_else(|| anyhow!("worker '{}' is gone", worker_id))
     }
 
+    /// Finds a worker by worker ID.
+    fn get_worker_mut(&mut self, worker_id: Uuid) -> Result<&mut Worker, Error> {
+        self.workers
+            .iter_mut()
+            .find(|x| x.worker_id == worker_id)
+            .ok_or_else(|| anyhow!("worker '{}' is gone", worker_id))
+    }
+
     /// Runs the main communication loop
     async fn event_loop(&mut self) -> Result<(), Error> {
         loop {
@@ -195,9 +202,13 @@ impl Controller {
                         }
                     }
                 }
-                (q, task) = self.storage.next_queue_item() => {
-                    // TODO: Pick a random worker
-                    // send item
+                (_, ref task) = self.storage.next_queue_item() => {
+                    for worker in self.workers.iter() {
+                        if worker.state.tasks.contains(&task.task_name) {
+                            self.send_msg(worker.worker_id, Message::RunTask(task.clone())).await?;
+                            break;
+                        }
+                    }
                 }
                 _ = signal::ctrl_c() => {
                     self.shutting_down = true;
@@ -212,9 +223,6 @@ impl Controller {
     async fn handle_message(&mut self, worker_id: Uuid, msg: Message) -> Result<(), Error> {
         event!(Level::DEBUG, "worker message {:?}", msg);
         match msg {
-            Message::Ping(_) => {
-                println!("client sent a ping");
-            }
             Message::WorkerDied(cmd) => {
                 println!("worker {} died (status = {:?})", cmd.worker_id, cmd.status);
                 self.workers.retain(|x| x.worker_id != worker_id);
@@ -227,27 +235,14 @@ impl Controller {
                     .params
                     .insert(cmd.params_id, Arc::new(cmd.params));
             }
-            Message::SpawnTask(cmd) => {
-                let params = match self.storage.params.remove(&cmd.params_id) {
-                    Some(params) => params,
-                    None => bail!("cannot find parameters"),
-                };
-                let task = Task::new(
-                    cmd.task_name,
-                    cmd.task_id,
-                    cmd.task_key,
-                    params,
-                    cmd.workflow_run_id,
-                    cmd.persist_result,
-                );
+            Message::SpawnTask(task) => {
                 self.enqueue_task(task).await?;
             }
             Message::WorkerStart(cmd) => {
-                let worker = self.get_worker(worker_id)?;
-                let mut state = worker.state.lock().await;
-                state.tasks = cmd.tasks;
-                state.workflows = cmd.workflows;
-                event!(Level::DEBUG, "worker registered {:?}", state);
+                let worker = self.get_worker_mut(worker_id)?;
+                worker.state.tasks = cmd.tasks;
+                worker.state.workflows = cmd.workflows;
+                event!(Level::DEBUG, "worker registered {:?}", worker.state);
             }
             other => {
                 event!(Level::WARN, "unhandled message {:?}", other);
@@ -257,7 +252,7 @@ impl Controller {
     }
 
     async fn enqueue_task(&mut self, task: Task) -> Result<(), Error> {
-        let queue_name = self.config.queue_name_for_task_name(task.name());
+        let queue_name = self.config.queue_name_for_task_name(&task.task_name);
         let q = self
             .storage
             .task_queues
@@ -302,7 +297,7 @@ async fn spawn_worker(
     let worker = Worker {
         worker_id,
         tx: Mutex::new(tx),
-        state: Mutex::new(WorkerState::default()),
+        state: WorkerState::default(),
     };
 
     {
