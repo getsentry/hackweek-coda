@@ -101,7 +101,7 @@ class CborSupervisorAPI(SupervisorAPI):
 class Supervisor:
 
     def __init__(self, url):
-        self._api = MockSupervisorAPI()
+        self._api = CborSupervisorAPI(url)
         self._listener = None
 
     async def _make_request_and_wait(self, cmd, args):
