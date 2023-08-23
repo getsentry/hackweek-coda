@@ -16,7 +16,9 @@ class MockServer:
 
         self.active_tasks = {}
         self.active_workflows = {}
-        self.active_params = {}
+
+        self.stored_params = {}
+        self.stored_tasks_results = {}
 
         self.message_queue = []
 
@@ -67,7 +69,7 @@ class MockServer:
         params_id = args["params_id"]
         params = args["params"]
 
-        self.active_params[params_id] = params
+        self.stored_params[params_id] = params
 
     def get_params(self, request_id, args):
         params_id = args["params_id"]
@@ -76,16 +78,50 @@ class MockServer:
             "type": "resp",
             "cmd": "get_params",
             "request_id": request_id.bytes,
-            "result": self.active_params[params_id]
+            "result": self.stored_params[params_id]
         }
 
         self.message_queue.append(msg)
 
     def spawn_task(self, request_id, args):
-        pass
+        task_name = args["task_name"]
+        task_id = args["task_id"]
+        task_key = args["task_key"]
+        params_id = args["params_id"]
+        workflow_run_id = args["workflow_run_id"]
+        persist_result = args["persist_result"]
+
+        request_id = uuid.uuid4()
+
+        msg = {
+            "type": "req",
+            "cmd": "execute_task",
+            "request_id": request_id.bytes,
+            "args": {
+                "task_name": task_name,
+                "task_id": task_id.bytes,
+                "task_key": task_key,
+                "params_id": params_id.bytes,
+                "workflow_run_id": workflow_run_id.bytes,
+                "persist_result": persist_result
+            }
+        }
+
+        self.message_queue.append(msg)
+        self.active_tasks[(task_id, task_key)] = task_name
 
     def get_task_result(self, request_id, args):
-        pass
+        task_key = args["task_key"]
+
+        msg = {
+            "type": "resp",
+            "cmd": "get_params",
+            "request_id": request_id.bytes,
+            "result": self.stored_tasks_results[task_key]
+        }
+
+        self.message_queue.append(msg)
+        # del self.stored_tasks_results[task_key]
 
 
 class MockSupervisorAPI(SupervisorAPI):
