@@ -47,7 +47,7 @@ class MockServer:
         workflow_run_id = uuid.uuid4()
         params_id = uuid.uuid4()
 
-        self.store_params(request_id, {"params_id": params_id.bytes, "params": {"a": 10, "b": 20}})
+        self.store_params(None, {"params_id": params_id.bytes, "params": {"a": 10, "b": 20}})
 
         msg = {
             "type": "req",
@@ -73,13 +73,19 @@ class MockServer:
         params_id = args["params_id"]
 
         msg = {
-            "type": "res",
+            "type": "resp",
             "cmd": "get_params",
-            "request_id": request_id,
+            "request_id": request_id.bytes,
             "result": self.active_params[params_id]
         }
 
         self.message_queue.append(msg)
+
+    def spawn_task(self, request_id, args):
+        pass
+
+    def get_task_result(self, request_id, args):
+        pass
 
 
 class MockSupervisorAPI(SupervisorAPI):
@@ -91,7 +97,7 @@ class MockSupervisorAPI(SupervisorAPI):
         request_id = self.server.handle_cmd(cmd, args)
         return SupervisorRequest(
             cmd=cmd,
-            request_id=request_id.bytes
+            request_id=request_id
         )
 
     def build_condition_for_response(self, request):

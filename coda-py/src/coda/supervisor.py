@@ -13,7 +13,7 @@ def _default_message_condition(_type, request_id, **kwargs):
         message_type = value["type"]
         message_request_id = value.get("request_id")
 
-        return message_type == _type and message_request_id == request_id
+        return message_type == _type and message_request_id == request_id.bytes
 
     return inner
 
