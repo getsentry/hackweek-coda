@@ -163,9 +163,37 @@ class Supervisor:
             }
         )
 
+    def publish_task_result(self, task_key, workflow_run_id, result):
+        self._api.make_request(
+            cmd="publish_task_result",
+            args={
+                "task_key": task_key,
+                "workflow_run_id": workflow_run_id.bytes,
+                "result": result
+            }
+        )
+
     async def get_task_result(self, task_key):
         return await self._make_request_and_wait(
             cmd="get_task_result",
             args={
                 "task_key": task_key
             })
+
+    def spawn_workflow(self, workflow_name, workflow_run_id, params_id):
+        return self._api.make_request(
+            cmd="spawn_workflow",
+            args={
+                "workflow_name": workflow_name,
+                "workflow_run_id": workflow_run_id.bytes,
+                "params_id": params_id.bytes
+            }
+        )
+
+    def workflow_ended(self, workflow_run_id):
+        self._api.make_request(
+            cmd="workflow_ended",
+            args={
+                "workflow_run_id": workflow_run_id.bytes
+            }
+        )

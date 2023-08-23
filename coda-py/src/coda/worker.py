@@ -27,10 +27,16 @@ class Worker(Listener):
         # Signal used to stop the execution of the main loop from another coroutine.
         self._stop_signal = asyncio.Queue(maxsize=1)
 
-    async def run(self):
+    async def run(self, start_workflows=False):
         self.supervisor.attach_listener(self)
         self._register()
+        if start_workflows:
+            self._start_workflows()
         await self._loop()
+
+    def listen_for(self, signal, condition):
+        interest = Interest(signal, condition)
+        self._interests.append(interest)
 
     def _register(self):
         logging.debug(f"Registering {len(self.supported_tasks)} tasks and {len(self.supported_workflows)} workflows")
@@ -67,8 +73,9 @@ class Worker(Listener):
         await self._stop_signal.put(0)
 
     async def _process_message(self, message):
+        # In case we don't have a message, ready, we will yield execution to the next coroutine and see if that
+        # will make some progress, which will put another message in the input.
         if message is None:
-            await self._stop_loop()
             return
 
         handling_result = await self._handle_message(message)
@@ -87,8 +94,11 @@ class Worker(Listener):
             return MessageHandlingResult.SUCCESS
 
         cmd = message["cmd"]
+        args = message["args"]
         if cmd == "execute_workflow":
-            return await self._execute_workflow(message["args"])
+            return await self._execute_workflow(args)
+        elif cmd == "execute_task":
+            return await self._execute_task(args)
         elif cmd == "request_worker_shutdown":
             return MessageHandlingResult.STOP
         else:
@@ -113,10 +123,10 @@ class Worker(Listener):
 
         return True
 
-    async def _execute_workflow(self, message):
-        workflow_name = message["workflow_name"]
-        workflow_run_id = uuid.UUID(bytes=message["workflow_run_id"])
-        params_id = uuid.UUID(bytes=message["params_id"])
+    async def _execute_workflow(self, args):
+        workflow_name = args["workflow_name"]
+        workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
+        params_id = uuid.UUID(bytes=args["params_id"])
 
         found_workflow = None
         for supported_workflow in self.supported_workflows:
@@ -124,18 +134,41 @@ class Worker(Listener):
                 found_workflow = supported_workflow
 
         if found_workflow is None:
-            raise RuntimeError(f"Workflow {workflow_name} is not supported in this worker")
+            logging.warning(f"Workflow {workflow_name} is not supported in this worker")
+            return
 
         # We register a workflow context, which will encapsulate the logic to drive a workflow.
         workflow_context = WorkflowContext(self, self.supervisor, workflow_name, workflow_run_id)
 
         # We fetch the params and run the workflow.
         workflow_params = await self.supervisor.get_params(params_id)
-        result = await found_workflow(workflow_context, **workflow_params)
-        logging.debug(f"The workflow {workflow_name} terminated with result {result}")
+        await found_workflow(workflow_context, **workflow_params)
 
         return MessageHandlingResult.SUCCESS
 
-    def listen_for(self, signal, condition):
-        interest = Interest(signal, condition)
-        self._interests.append(interest)
+    async def _execute_task(self, args):
+        task_name = args["task_name"]
+        # TODO: check how we can use task id.
+        task_id = args["task_id"]
+        task_key = args["task_key"]
+        params_id = uuid.UUID(bytes=args["params_id"])
+        workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
+        persist_result = args["persist_result"]
+
+        found_task = None
+        for supported_task in self.supported_tasks:
+            if supported_task.__task_name__ == task_name:
+                found_task = supported_task
+
+        if found_task is None:
+            logging.warning(f"Task {task_name} is not supported in this worker")
+            return
+
+        # We fetch the params and run the task.
+        task_params = await self.supervisor.get_params(params_id=params_id)
+        result = await found_task(**task_params)
+        if persist_result:
+            logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")
+            self.supervisor.publish_task_result(task_key, workflow_run_id, result)
+
+        return MessageHandlingResult.SUCCESS

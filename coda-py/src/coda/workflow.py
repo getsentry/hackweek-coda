@@ -15,17 +15,17 @@ def coda_workflow(workflow_name):
 
 class WorkflowContext:
 
-    def __init__(self, worker, supervisor, workflow_name, workflow_run_id):
-        self.worker = worker
+    def __init__(self, supervisor, workflow_name, workflow_run_id):
         self.supervisor = supervisor
         self.workflow_name = workflow_name
         self.workflow_run_id = workflow_run_id
 
     def spawn_task(self, task_function, persistence_key, params):
-        task_name = task_function.__name__
+        task_name = task_function.__task_name__
         task_key = hash_cache_key(
             [self.workflow_run_id, task_name] + list(persistence_key)
         )
+
         logging.info(f"Spawning task {task_name} in workflow {self.workflow_name}")
 
         # We store the parameters of the function as a separate process.
@@ -54,4 +54,25 @@ class WorkflowContext:
             workflow_name=self.workflow_name,
             task_id=task_id,
             task_key=task_key
+        )
+
+    def spawn_workflow(self, workflow_function, params):
+        workflow_name = workflow_function.__workflow_name__
+        workflow_run_id = generate_uuid()
+
+        logging.info(f"Spawning workflow {workflow_name} in workflow {self.workflow_name}")
+
+        # We store the workflow parameter as a separate process.
+        params_id = generate_uuid()
+        self.supervisor.store_params(
+            workflow_run_id=workflow_run_id,
+            params_id=params_id,
+            params=params
+        )
+
+        # We spawn the workflow.
+        self.supervisor.spawn_workflow(
+            workflow_name=workflow_name,
+            workflow_run_id=workflow_run_id,
+            params_id=params_id
         )

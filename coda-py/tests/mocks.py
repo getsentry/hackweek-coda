@@ -20,6 +20,8 @@ class MockServer:
         self.stored_params = {}
         self.stored_tasks_results = {}
 
+        self.pending_get_task_result_reqs = {}
+
         self.message_queue = []
 
     def get_next_message(self):
@@ -49,7 +51,7 @@ class MockServer:
         workflow_run_id = uuid.uuid4()
         params_id = uuid.uuid4()
 
-        self.store_params(None, {"params_id": params_id.bytes, "params": {"a": 10, "b": 20}})
+        self.store_params(None, {"params_id": params_id.bytes, "params": {"x": 5}})
 
         msg = {
             "type": "req",
@@ -99,10 +101,10 @@ class MockServer:
             "request_id": request_id.bytes,
             "args": {
                 "task_name": task_name,
-                "task_id": task_id.bytes,
+                "task_id": task_id,
                 "task_key": task_key,
-                "params_id": params_id.bytes,
-                "workflow_run_id": workflow_run_id.bytes,
+                "params_id": params_id,
+                "workflow_run_id": workflow_run_id,
                 "persist_result": persist_result
             }
         }
@@ -110,18 +112,41 @@ class MockServer:
         self.message_queue.append(msg)
         self.active_tasks[(task_id, task_key)] = task_name
 
-    def get_task_result(self, request_id, args):
+    def publish_task_result(self, request_id, args):
         task_key = args["task_key"]
+        result = args["result"]
+
+        request_id_to_unblock = self.pending_get_task_result_reqs.get(task_key)
+        if request_id_to_unblock is None:
+            return
 
         msg = {
             "type": "resp",
-            "cmd": "get_params",
+            "cmd": "get_task_result",
+            "request_id": request_id_to_unblock.bytes,
+            "result": result
+        }
+
+        self.message_queue.append(msg)
+        del self.pending_get_task_result_reqs[task_key]
+
+    def get_task_result(self, request_id, args):
+        task_key = args["task_key"]
+
+        if task_key not in self.stored_tasks_results:
+            # We store the request id, in order to wake up the correct interest on task result publishing.
+            self.pending_get_task_result_reqs[task_key] = request_id
+            return
+
+        msg = {
+            "type": "resp",
+            "cmd": "get_task_result",
             "request_id": request_id.bytes,
             "result": self.stored_tasks_results[task_key]
         }
 
         self.message_queue.append(msg)
-        # del self.stored_tasks_results[task_key]
+        del self.stored_tasks_results[task_key]
 
 
 class MockSupervisorAPI(SupervisorAPI):
@@ -155,11 +180,14 @@ async def sum_two_numbers(a, b):
 
 
 @coda_workflow(workflow_name="MathWorkflow")
-async def math_workflow(context, a, b):
+async def math_workflow(context, x):
+    a = x * 10
+    b = x * 100
+
     task_handle = context.spawn_task(
         sum_two_numbers,
         [a, b],
         {"a": a, "b": b}
     )
     result = await task_handle
-    return result
+    print(f"The computation finished with result {result}")
