@@ -154,7 +154,7 @@ class MockSupervisorAPI(SupervisorAPI):
     def __init__(self):
         self.server = MockServer()
 
-    def make_request(self, cmd, args):
+    def make_request(self, cmd, args, has_response):
         request_id = self.server.handle_cmd(cmd, args)
         return SupervisorRequest(
             cmd=cmd,

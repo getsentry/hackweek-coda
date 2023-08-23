@@ -107,9 +107,11 @@ class Worker(Listener):
     async def _try_to_satisfy_interest(self, message):
         matching_index = None
         matching_interest = None
-        # TODO: implement multi-interest matching.
+        logging.debug(f"Trying to satisfy message with the available {len(self._interests)} interests")
+
         for index, interest in enumerate(self._interests):
             if interest.matches(message):
+                logging.debug("Found a matching interest")
                 matching_index = index
                 matching_interest = interest
                 break
@@ -119,6 +121,7 @@ class Worker(Listener):
 
         await matching_interest.satisfy(message)
 
+        logging.debug("Satisfied interest")
         del self._interests[matching_index]
 
         return True

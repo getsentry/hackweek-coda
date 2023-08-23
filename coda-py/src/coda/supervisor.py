@@ -29,7 +29,7 @@ class SupervisorRequest:
 class SupervisorAPI(ABC):
 
     @abstractmethod
-    def make_request(self, cmd, args):
+    def make_request(self, cmd, args, has_response):
         pass
 
     @abstractmethod
@@ -75,14 +75,16 @@ class CborSupervisorAPI(SupervisorAPI):
 
         return cbor2.loads(bytes_vals)
 
-    def make_request(self, cmd, args):
-        request_id = generate_uuid()
+    def make_request(self, cmd, args, has_response=False):
         request = {
             "type": "req",
-            "request_id": request_id.bytes,
             "cmd": cmd,
             "args": args,
         }
+
+        request_id = generate_uuid()
+        if has_response:
+            request["request_id"] = request_id
 
         self._write_to_pipe(request)
         return SupervisorRequest(cmd, request_id)
@@ -112,7 +114,7 @@ class Supervisor:
         return cls(api=CborSupervisorAPI(url))
 
     async def _make_request_and_wait(self, cmd, args):
-        request = self._api.make_request(cmd, args)
+        request = self._api.make_request(cmd, args, True)
         if self._listener is None:
             raise RuntimeError("A listener is required in order to wait for a response")
 
