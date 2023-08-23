@@ -20,7 +20,7 @@ class WorkflowContext:
         self.workflow_name = workflow_name
         self.workflow_run_id = workflow_run_id
 
-    def spawn_task(self, task_function, persistence_key, params):
+    async def spawn_task(self, task_function, persistence_key, params):
         task_name = task_function.__task_name__
         task_key = hash_cache_key(
             [self.workflow_run_id, task_name] + list(persistence_key)
@@ -30,7 +30,7 @@ class WorkflowContext:
 
         # We store the parameters of the function as a separate process.
         params_id = generate_uuid()
-        self.supervisor.store_params(
+        await self.supervisor.store_params(
             workflow_run_id=self.workflow_run_id,
             params_id=params_id,
             params=params
@@ -39,7 +39,7 @@ class WorkflowContext:
         # We spawn the task but in reality the server will see if it already has the task result for the given
         # task key.
         task_id = generate_uuid()
-        self.supervisor.spawn_task(
+        await self.supervisor.spawn_task(
             task_name=task_name,
             task_id=task_id,
             task_key=task_key,
@@ -57,7 +57,7 @@ class WorkflowContext:
             task_key=task_key
         )
 
-    def spawn_workflow(self, workflow_function, params):
+    async def spawn_workflow(self, workflow_function, params):
         workflow_name = workflow_function.__workflow_name__
         workflow_run_id = generate_uuid()
 
@@ -65,14 +65,14 @@ class WorkflowContext:
 
         # We store the workflow parameter as a separate process.
         params_id = generate_uuid()
-        self.supervisor.store_params(
+        await self.supervisor.store_params(
             workflow_run_id=workflow_run_id,
             params_id=params_id,
             params=params
         )
 
         # We spawn the workflow.
-        self.supervisor.spawn_workflow(
+        await self.supervisor.spawn_workflow(
             workflow_name=workflow_name,
             workflow_run_id=workflow_run_id,
             params_id=params_id

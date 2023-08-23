@@ -20,7 +20,7 @@ async def run():
 
     async def run_my_workflow():
         context = WorkflowContext(supervisor, "", "")
-        context.spawn_workflow(my_workflow, {"x": 10})
+        await context.spawn_workflow(my_workflow, {"x": 10})
 
     await asyncio.gather(asyncio.create_task(run_my_workflow()))
     await worker.run()

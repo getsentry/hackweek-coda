@@ -7,7 +7,7 @@ async def my_workflow(context, x):
     a = x * 10
     b = x + 30
 
-    task_handle = context.spawn_task(
+    task_handle = await context.spawn_task(
         sum_two_numbers,
         [a, b],
         {"a": a, "b": b}

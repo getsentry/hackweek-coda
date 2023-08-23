@@ -29,16 +29,16 @@ class Worker(Listener):
 
     async def run(self):
         self.supervisor.attach_listener(self)
-        self._register()
+        await self._register()
         await self._loop()
 
     def listen_for(self, signal, condition):
         interest = Interest(signal, condition)
         self._interests.append(interest)
 
-    def _register(self):
+    async def _register(self):
         logging.debug(f"Registering {len(self.supported_tasks)} tasks and {len(self.supported_workflows)} workflows")
-        self.supervisor.register_worker(
+        await self.supervisor.register_worker(
             tasks=[task.__task_name__ for task in self.supported_tasks],
             workflows=[workflow.__workflow_name__ for workflow in self.supported_workflows]
         )
@@ -47,7 +47,7 @@ class Worker(Listener):
         tasks = []
 
         while self._is_active():
-            message = self.supervisor.consume_next_message()
+            message = await self.supervisor.consume_next_message()
             logging.debug(f"Received next message {message}")
 
             new_task = asyncio.create_task(self._process_message(message), name="ProcessMessage")
@@ -175,6 +175,6 @@ class Worker(Listener):
         result = await found_task(**task_params)
         if persist_result:
             logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")
-            self.supervisor.publish_task_result(task_key, workflow_run_id, result)
+            await self.supervisor.publish_task_result(task_key, workflow_run_id, result)
 
         return MessageHandlingResult.SUCCESS

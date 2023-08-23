@@ -3,6 +3,7 @@ import struct
 from abc import ABC, abstractmethod
 
 import cbor2
+import aiofiles
 
 from coda.interest import Signal
 from coda.utils import generate_uuid
@@ -31,7 +32,7 @@ class SupervisorRequest:
 class SupervisorAPI(ABC):
 
     @abstractmethod
-    def make_request(self, cmd, args, has_response):
+    async def make_request(self, cmd, args, has_response):
         pass
 
     @abstractmethod
@@ -39,7 +40,7 @@ class SupervisorAPI(ABC):
         pass
 
     @abstractmethod
-    def get_next_message(self):
+    async def get_next_message(self):
         pass
 
     @abstractmethod
@@ -57,28 +58,43 @@ class CborSupervisorAPI(SupervisorAPI):
 
     def __init__(self, url):
         self.url = url
-        self.rx = open(os.environ.get("CODA_WORKER_READ_PATH", ""), "rb")
-        self.tx = open(os.environ.get("CODA_WORKER_WRITE_PATH", ""), "wb")
+        self.rx = None
+        self.tx = None
 
-    def _write_to_pipe(self, data):
+    async def _open_rx(self):
+        if self.rx is None:
+            self.rx = await aiofiles.open(os.environ.get("CODA_WORKER_READ_PATH", ""), "rb")
+
+        return self.rx
+
+    async def _open_tx(self):
+        if self.tx is None:
+            self.tx = await aiofiles.open(os.environ.get("CODA_WORKER_WRITE_PATH", ""), "wb")
+
+        return self.tx
+
+    async def _write_to_pipe(self, data):
         logging.debug(f"Writing {data} to the write pipe")
         msg = cbor2.dumps(data)
-        self.tx.write(struct.pack('!i', len(msg)) + msg)
-        self.tx.flush()
 
-    def _read_from_pipe(self):
-        msg = self.rx.read(4)
+        tx = await self._open_tx()
+        await tx.write(struct.pack('!i', len(msg)) + msg)
+        await tx.flush()
+
+    async def _read_from_pipe(self):
+        rx = await self._open_rx()
+        msg = await rx.read(4)
         if not msg:
             return
 
-        bytes_vals = self.rx.read(struct.unpack('!i', msg)[0])
+        bytes_vals = await rx.read(struct.unpack('!i', msg)[0])
         if not bytes_vals:
             return
 
         data = cbor2.loads(bytes_vals)
         return data
 
-    def make_request(self, cmd, args, has_response=False):
+    async def make_request(self, cmd, args, has_response=False):
         request = {
             "type": "req",
             "cmd": cmd,
@@ -89,7 +105,7 @@ class CborSupervisorAPI(SupervisorAPI):
         if has_response:
             request["request_id"] = request_id.bytes
 
-        self._write_to_pipe(request)
+        await self._write_to_pipe(request)
         return SupervisorRequest(cmd, request_id)
 
     def build_condition_for_response(self, request):
@@ -99,8 +115,8 @@ class CborSupervisorAPI(SupervisorAPI):
             cmd=request.cmd
         )
 
-    def get_next_message(self):
-        return self._read_from_pipe()
+    async def get_next_message(self):
+        return await self._read_from_pipe()
 
     def extract_response(self, response):
         return response["result"]
@@ -117,7 +133,7 @@ class Supervisor:
         return cls(api=CborSupervisorAPI(url))
 
     async def _make_request_and_wait(self, cmd, args):
-        request = self._api.make_request(cmd, args, True)
+        request = await self._api.make_request(cmd, args, True)
         if self._listener is None:
             raise RuntimeError("A listener is required in order to wait for a response")
 
@@ -127,11 +143,11 @@ class Supervisor:
     def attach_listener(self, listener):
         self._listener = listener
 
-    def consume_next_message(self):
-        return self._api.get_next_message()
+    async def consume_next_message(self):
+        return await self._api.get_next_message()
 
-    def register_worker(self, tasks, workflows):
-        self._api.make_request(
+    async def register_worker(self, tasks, workflows):
+        await self._api.make_request(
             cmd="register_worker",
             args={
                 "tasks": tasks,
@@ -139,8 +155,8 @@ class Supervisor:
             }
         )
 
-    def store_params(self, workflow_run_id, params_id, params):
-        self._api.make_request(
+    async def store_params(self, workflow_run_id, params_id, params):
+        await self._api.make_request(
             cmd="store_params",
             args={
                 "workflow_run_id": workflow_run_id.bytes,
@@ -158,8 +174,8 @@ class Supervisor:
             }
         )
 
-    def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
-        self._api.make_request(
+    async def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
+        await self._api.make_request(
             cmd="spawn_task",
             args={
                 "task_name": task_name,
@@ -171,8 +187,8 @@ class Supervisor:
             }
         )
 
-    def publish_task_result(self, task_key, workflow_run_id, result):
-        self._api.make_request(
+    async def publish_task_result(self, task_key, workflow_run_id, result):
+        await self._api.make_request(
             cmd="publish_task_result",
             args={
                 "task_key": task_key,
@@ -190,8 +206,8 @@ class Supervisor:
             }
         )
 
-    def spawn_workflow(self, workflow_name, workflow_run_id, params_id):
-        return self._api.make_request(
+    async def spawn_workflow(self, workflow_name, workflow_run_id, params_id):
+        await self._api.make_request(
             cmd="spawn_workflow",
             args={
                 "workflow_name": workflow_name,
@@ -200,8 +216,8 @@ class Supervisor:
             }
         )
 
-    def workflow_ended(self, workflow_run_id):
-        self._api.make_request(
+    async def workflow_ended(self, workflow_run_id):
+        await self._api.make_request(
             cmd="workflow_ended",
             args={
                 "workflow_run_id": workflow_run_id.bytes
