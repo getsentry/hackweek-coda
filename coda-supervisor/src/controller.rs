@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -9,16 +9,18 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Error};
 use bytes::{Buf, BufMut, BytesMut};
 use ciborium::Value;
+use futures::future::Either;
 use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
 use tempfile::TempDir;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::unix::pipe;
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::{signal, time};
 use tracing::{event, Level};
@@ -32,8 +34,8 @@ use crate::storage::{DequeuedItem, Storage};
 pub struct Controller {
     command: Vec<OsString>,
     workers: Vec<Worker>,
-    worker_tx: mpsc::Sender<(Uuid, Result<Message, Error>)>,
-    worker_rx: mpsc::Receiver<(Uuid, Result<Message, Error>)>,
+    mainloop_tx: mpsc::Sender<(Recipient, Result<Message, Error>)>,
+    mainloop_rx: mpsc::Receiver<(Recipient, Result<Message, Error>)>,
     listener: Option<Listener>,
     home: TempDir,
     shutting_down: bool,
@@ -43,6 +45,8 @@ pub struct Controller {
 
 struct Listener {
     listener: TcpListener,
+    clients: HashMap<SocketAddr, OwnedWriteHalf>,
+    mainloop_tx: mpsc::Sender<(Recipient, Result<Message, Error>)>,
 }
 
 #[derive(Debug, Copy, Clone, Hash, Ord, Eq, PartialEq, PartialOrd)]
@@ -67,17 +71,17 @@ pub struct Worker {
 impl Controller {
     /// Creates a fresh controller.
     pub async fn new(cmd: &[OsString], config: Config) -> Result<Controller, Error> {
-        let (worker_tx, worker_rx) = mpsc::channel(20 * config.worker_count());
+        let (mainloop_tx, mainloop_rx) = mpsc::channel(20 * config.worker_count());
         Ok(Controller {
             command: cmd.iter().cloned().collect(),
             workers: Vec::new(),
-            worker_tx,
-            worker_rx,
+            mainloop_tx: mainloop_tx.clone(),
+            mainloop_rx,
             home: tempfile::tempdir()?,
             shutting_down: false,
             storage: Storage::from_config(&config),
             listener: if let Some(addr) = config.listen_addr() {
-                Some(Listener::connect(addr).await?)
+                Some(Listener::connect(addr, mainloop_tx).await?)
             } else {
                 None
             },
@@ -96,7 +100,7 @@ impl Controller {
     fn spawn_worker(&self) -> impl Future<Output = Result<Worker, Error>> {
         let mut cmd = Command::new(&self.command[0]);
         cmd.args(&self.command[1..]);
-        let worker_tx = self.worker_tx.clone();
+        let worker_tx = self.mainloop_tx.clone();
         let dir = self.home.path().to_path_buf();
         async move { spawn_worker(dir, cmd, worker_tx).await }
     }
@@ -116,7 +120,7 @@ impl Controller {
     }
 
     /// Send a message to a recipient.
-    async fn send_msg(&self, recipient: Recipient, msg: Message) -> Result<(), Error> {
+    async fn send_msg(&mut self, recipient: Recipient, msg: Message) -> Result<(), Error> {
         match recipient {
             Recipient::Worker(worker_id) => {
                 let worker = self
@@ -125,9 +129,19 @@ impl Controller {
                     .find(|x| x.worker_id == worker_id)
                     .ok_or_else(|| anyhow!("cannot find worker"))?;
                 let mut tx = worker.tx.lock().await;
-                send_msg(&mut tx, msg).await
+                send_msg(&mut *tx, msg).await
             }
-            Recipient::Client(_) => todo!(),
+            Recipient::Client(addr) => {
+                if let Some(ref mut listener) = self.listener {
+                    let sock = listener
+                        .clients
+                        .get_mut(&addr)
+                        .ok_or_else(|| anyhow!("cannot find client"))?;
+                    send_msg(sock, msg).await
+                } else {
+                    bail!("cannot send to socket, no listener");
+                }
+            }
         }
     }
 
@@ -157,10 +171,10 @@ impl Controller {
 
     async fn event_loop_iterate(&mut self) -> Result<(), Error> {
         tokio::select! {
-            Some((worker_id, rv)) = self.worker_rx.recv() => {
+            Some((recipient, rv)) = self.mainloop_rx.recv() => {
                 match rv {
                     Ok(msg) => {
-                        match self.handle_message(Recipient::Worker(worker_id), msg).await {
+                        match self.handle_message(recipient, msg).await {
                             Ok(()) => {}
                             Err(err) => {
                                 event!(Level::ERROR, "message handler errored: {}", err);
@@ -172,6 +186,10 @@ impl Controller {
                     }
                 }
             }
+            _ = self.listener
+                .as_mut()
+                .map(|x| Either::Left(x.accept()))
+                .unwrap_or(Either::Right(futures::future::pending())) => {}
             item = self.storage.dequeue() => {
                 // XXX: this basically always gives it to the same worker
                 // and even when the worker is busy.
@@ -349,7 +367,7 @@ impl Controller {
 async fn spawn_worker(
     dir: PathBuf,
     mut cmd: Command,
-    mainloop_tx: mpsc::Sender<(Uuid, Result<Message, Error>)>,
+    mainloop_tx: mpsc::Sender<(Recipient, Result<Message, Error>)>,
 ) -> Result<Worker, Error> {
     let worker_id = Uuid::new_v4();
     let rx_path = dir.join(format!("rx-{}.pipe", worker_id));
@@ -388,7 +406,12 @@ async fn spawn_worker(
             loop {
                 let msg = read_msg(&mut rx).await;
                 let failed = msg.is_err();
-                if mainloop_tx.send((worker_id, msg)).await.is_err() || failed {
+                if mainloop_tx
+                    .send((Recipient::Worker(worker_id), msg))
+                    .await
+                    .is_err()
+                    || failed
+                {
                     break;
                 }
             }
@@ -404,7 +427,7 @@ async fn spawn_worker(
             };
             mainloop_tx
                 .send((
-                    worker_id,
+                    Recipient::Worker(worker_id),
                     Ok(Message::Event(Event::WorkerDied(WorkerDied {
                         worker_id,
                         status,
@@ -426,34 +449,56 @@ fn require_worker(recipient: Recipient) -> Result<Uuid, Error> {
     }
 }
 
-async fn read_msg(rx: &mut pipe::Receiver) -> Result<Message, Error> {
+async fn read_msg<R: AsyncRead + Unpin>(r: &mut R) -> Result<Message, Error> {
     let mut bytes = [0u8; 4];
-    rx.read_exact(&mut bytes).await?;
+    r.read_exact(&mut bytes).await?;
     let len = (&bytes[..]).get_u32();
     let mut buf = vec![0; len as usize];
-    rx.read_exact(&mut buf).await?;
+    r.read_exact(&mut buf).await?;
     Ok(ciborium::from_reader(&buf[..])?)
 }
 
-async fn send_msg(tx: &mut MutexGuard<'_, pipe::Sender>, msg: Message) -> Result<(), Error> {
+async fn send_msg<W: AsyncWrite + Unpin>(w: &mut W, msg: Message) -> Result<(), Error> {
     let mut buf = Vec::<u8>::new();
     ciborium::into_writer(&msg, &mut buf).unwrap();
     let mut prefix = BytesMut::with_capacity(4);
     prefix.put_u32(buf.len() as u32);
-    tx.write_all(&prefix[..]).await?;
-    tx.write_all(&buf[..]).await?;
+    w.write_all(&prefix[..]).await?;
+    w.write_all(&buf[..]).await?;
     Ok(())
 }
 
 impl Listener {
-    pub async fn connect(addr: SocketAddr) -> Result<Listener, Error> {
+    pub async fn connect(
+        addr: SocketAddr,
+        mainloop_tx: mpsc::Sender<(Recipient, Result<Message, Error>)>,
+    ) -> Result<Listener, Error> {
         Ok(Listener {
             listener: TcpListener::bind(addr).await?,
+            clients: HashMap::new(),
+            mainloop_tx,
         })
     }
 
     pub async fn accept(&mut self) -> Result<(), Error> {
         let (stream, addr) = self.listener.accept().await?;
+        let (mut read, write) = stream.into_split();
+        self.clients.insert(addr, write);
+        let mainloop_tx = self.mainloop_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                let msg = read_msg(&mut read).await;
+                let failed = msg.is_err();
+                if mainloop_tx
+                    .send((Recipient::Client(addr), msg))
+                    .await
+                    .is_err()
+                    || failed
+                {
+                    break;
+                }
+            }
+        });
         Ok(())
     }
 }
