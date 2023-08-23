@@ -1,26 +1,26 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::future::Future;
+use std::io::Cursor;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Error};
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use ciborium::Value;
 use futures::future::Either;
 use nix::libc::ENXIO;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
 use tempfile::TempDir;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::unix::pipe;
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::{signal, time};
 use tracing::{event, Level};
@@ -64,7 +64,7 @@ struct WorkerState {
 /// Represents a worker process.
 pub struct Worker {
     worker_id: Uuid,
-    tx: Mutex<pipe::Sender>,
+    tx: pipe::Sender,
     state: WorkerState,
 }
 
@@ -121,15 +121,17 @@ impl Controller {
 
     /// Send a message to a recipient.
     async fn send_msg(&mut self, recipient: Recipient, msg: Message) -> Result<(), Error> {
+        // TODO: buffer up messages and send them from a separate
+        // spawn / in the event loop rather than awaiting here.
+        let mut bytes = pack_msg(msg)?;
         match recipient {
             Recipient::Worker(worker_id) => {
                 let worker = self
                     .workers
-                    .iter()
+                    .iter_mut()
                     .find(|x| x.worker_id == worker_id)
                     .ok_or_else(|| anyhow!("cannot find worker"))?;
-                let mut tx = worker.tx.lock().await;
-                send_msg(&mut *tx, msg).await
+                worker.tx.write_all_buf(&mut bytes).await?
             }
             Recipient::Client(addr) => {
                 if let Some(ref mut listener) = self.listener {
@@ -137,12 +139,13 @@ impl Controller {
                         .clients
                         .get_mut(&addr)
                         .ok_or_else(|| anyhow!("cannot find client"))?;
-                    send_msg(sock, msg).await
+                    sock.write_all_buf(&mut bytes).await?
                 } else {
                     bail!("cannot send to socket, no listener");
                 }
             }
         }
+        Ok(())
     }
 
     /// Finds a worker by worker ID.
@@ -396,7 +399,7 @@ async fn spawn_worker(
 
     let worker = Worker {
         worker_id,
-        tx: Mutex::new(tx),
+        tx,
         state: WorkerState::default(),
     };
 
@@ -458,14 +461,13 @@ async fn read_msg<R: AsyncRead + Unpin>(r: &mut R) -> Result<Message, Error> {
     Ok(ciborium::from_reader(&buf[..])?)
 }
 
-async fn send_msg<W: AsyncWrite + Unpin>(w: &mut W, msg: Message) -> Result<(), Error> {
+fn pack_msg(msg: Message) -> Result<Cursor<Bytes>, Error> {
     let mut buf = Vec::<u8>::new();
     ciborium::into_writer(&msg, &mut buf).unwrap();
-    let mut prefix = BytesMut::with_capacity(4);
-    prefix.put_u32(buf.len() as u32);
-    w.write_all(&prefix[..]).await?;
-    w.write_all(&buf[..]).await?;
-    Ok(())
+    let mut rv = BytesMut::with_capacity(4);
+    rv.put_u32(buf.len() as u32);
+    rv.extend_from_slice(&buf);
+    Ok(Cursor::new(rv.freeze()))
 }
 
 impl Listener {
