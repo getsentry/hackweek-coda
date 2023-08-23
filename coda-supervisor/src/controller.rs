@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, bail, Error};
 use bytes::{Buf, BufMut, BytesMut};
 use ciborium::Value;
 use nix::libc::ENXIO;
@@ -14,6 +15,7 @@ use nix::unistd::mkfifo;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::pipe;
+use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex, MutexGuard};
@@ -32,10 +34,21 @@ pub struct Controller {
     workers: Vec<Worker>,
     worker_tx: mpsc::Sender<(Uuid, Result<Message, Error>)>,
     worker_rx: mpsc::Receiver<(Uuid, Result<Message, Error>)>,
+    listener: Option<Listener>,
     home: TempDir,
     shutting_down: bool,
     storage: Storage,
     config: Config,
+}
+
+struct Listener {
+    listener: TcpListener,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Ord, Eq, PartialEq, PartialOrd)]
+pub enum Recipient {
+    Worker(Uuid),
+    Client(SocketAddr),
 }
 
 #[derive(Default, Debug)]
@@ -53,7 +66,7 @@ pub struct Worker {
 
 impl Controller {
     /// Creates a fresh controller.
-    pub fn new(cmd: &[OsString], config: Config) -> Result<Controller, Error> {
+    pub async fn new(cmd: &[OsString], config: Config) -> Result<Controller, Error> {
         let (worker_tx, worker_rx) = mpsc::channel(20 * config.worker_count());
         Ok(Controller {
             command: cmd.iter().cloned().collect(),
@@ -63,6 +76,11 @@ impl Controller {
             home: tempfile::tempdir()?,
             shutting_down: false,
             storage: Storage::from_config(&config),
+            listener: if let Some(addr) = config.listen_addr() {
+                Some(Listener::connect(addr).await?)
+            } else {
+                None
+            },
             config,
         })
     }
@@ -97,15 +115,20 @@ impl Controller {
         Ok(())
     }
 
-    /// Send a message to a worker.
-    async fn send_msg(&self, worker_id: Uuid, msg: Message) -> Result<(), Error> {
-        let worker = self
-            .workers
-            .iter()
-            .find(|x| x.worker_id == worker_id)
-            .ok_or_else(|| anyhow!("cannot find worker"))?;
-        let mut tx = worker.tx.lock().await;
-        send_msg(&mut tx, msg).await
+    /// Send a message to a recipient.
+    async fn send_msg(&self, recipient: Recipient, msg: Message) -> Result<(), Error> {
+        match recipient {
+            Recipient::Worker(worker_id) => {
+                let worker = self
+                    .workers
+                    .iter()
+                    .find(|x| x.worker_id == worker_id)
+                    .ok_or_else(|| anyhow!("cannot find worker"))?;
+                let mut tx = worker.tx.lock().await;
+                send_msg(&mut tx, msg).await
+            }
+            Recipient::Client(_) => todo!(),
+        }
     }
 
     /// Finds a worker by worker ID.
@@ -137,7 +160,7 @@ impl Controller {
             Some((worker_id, rv)) = self.worker_rx.recv() => {
                 match rv {
                     Ok(msg) => {
-                        match self.handle_message(worker_id, msg).await {
+                        match self.handle_message(Recipient::Worker(worker_id), msg).await {
                             Ok(()) => {}
                             Err(err) => {
                                 event!(Level::ERROR, "message handler errored: {}", err);
@@ -156,7 +179,7 @@ impl Controller {
                     DequeuedItem::Task(task) => {
                         for worker in self.workers.iter() {
                             if worker.state.tasks.contains(&task.task_name) {
-                                self.send_msg(worker.worker_id, Message::Req(Req {
+                                self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Req {
                                     request_id: None,
                                     cmd: Cmd::ExecuteTask(task),
                                 })).await?;
@@ -167,7 +190,7 @@ impl Controller {
                     DequeuedItem::Workflow(workflow) => {
                         for worker in self.workers.iter() {
                             if worker.state.workflows.contains(&workflow.workflow_name) {
-                                self.send_msg(worker.worker_id, Message::Req(Req {
+                                self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Req {
                                     request_id: None,
                                     cmd: Cmd::ExecuteWorkflow(workflow),
                                 })).await?;
@@ -181,28 +204,28 @@ impl Controller {
         Ok(())
     }
 
-    async fn handle_message(&mut self, worker_id: Uuid, msg: Message) -> Result<(), Error> {
+    async fn handle_message(&mut self, recipient: Recipient, msg: Message) -> Result<(), Error> {
         event!(Level::DEBUG, "worker message {:?}", msg);
         match msg {
             Message::Req(req) => {
                 let request_id = req.request_id;
-                let result = self.handle_request(worker_id, req).await?;
+                let result = self.handle_request(recipient, req).await?;
                 if let (Some(result), Some(request_id)) = (result, request_id) {
-                    self.send_msg(worker_id, Message::Resp(Resp { request_id, result }))
+                    self.send_msg(recipient, Message::Resp(Resp { request_id, result }))
                         .await?;
                 }
                 Ok(())
             }
             Message::Resp(_resp) => Ok(()),
-            Message::Event(event) => self.handle_event(worker_id, event).await,
+            Message::Event(event) => self.handle_event(recipient, event).await,
         }
     }
 
-    async fn handle_event(&mut self, worker_id: Uuid, event: Event) -> Result<(), Error> {
+    async fn handle_event(&mut self, _recipient: Recipient, event: Event) -> Result<(), Error> {
         match event {
             Event::WorkerDied(cmd) => {
                 println!("worker {} died (status = {:?})", cmd.worker_id, cmd.status);
-                self.workers.retain(|x| x.worker_id != worker_id);
+                self.workers.retain(|x| x.worker_id != cmd.worker_id);
                 if !self.shutting_down {
                     self.workers.push(self.spawn_worker().await?);
                 }
@@ -211,9 +234,14 @@ impl Controller {
         Ok(())
     }
 
-    async fn handle_request(&mut self, worker_id: Uuid, req: Req) -> Result<Option<Value>, Error> {
+    async fn handle_request(
+        &mut self,
+        recipient: Recipient,
+        req: Req,
+    ) -> Result<Option<Value>, Error> {
         Ok(match req.cmd {
             Cmd::RegisterWorker(cmd) => {
+                let worker_id = require_worker(recipient)?;
                 let worker = self.get_worker_mut(worker_id)?;
                 worker.state.tasks = cmd.tasks;
                 worker.state.workflows = cmd.workflows;
@@ -249,6 +277,7 @@ impl Controller {
                 Some(Value::Null)
             }
             Cmd::GetTaskResult(cmd) => {
+                let worker_id = require_worker(recipient)?;
                 if let Some(result) = self
                     .storage
                     .get_task_result(cmd.workflow_run_id, cmd.task_key)
@@ -259,7 +288,7 @@ impl Controller {
                         self.storage.notify_task_result(
                             cmd.workflow_run_id,
                             cmd.task_key,
-                            worker_id,
+                            Recipient::Worker(worker_id),
                             request_id,
                         );
                         None
@@ -274,9 +303,9 @@ impl Controller {
                     cmd.task_key,
                     cmd.result.clone(),
                 ) {
-                    for (worker_id, request_id) in interests.into_iter() {
+                    for (recipient, request_id) in interests.into_iter() {
                         self.send_msg(
-                            worker_id,
+                            recipient,
                             Message::Resp(Resp {
                                 request_id,
                                 result: cmd.result.clone(),
@@ -291,9 +320,12 @@ impl Controller {
                 self.enqueue_workflow(workflow).await?;
                 Some(Value::Null)
             }
-            other => {
-                event!(Level::WARN, "unhandled message {:?}", other);
-                Some(Value::Null)
+            Cmd::WorkflowEnded(_cmd) => {
+                // todo: delete data of workflow
+                None
+            }
+            Cmd::ExecuteTask(_) | Cmd::ExecuteWorkflow(_) => {
+                bail!("command cannot be sent to supervisor")
             }
         })
     }
@@ -386,6 +418,14 @@ async fn spawn_worker(
     Ok(worker)
 }
 
+fn require_worker(recipient: Recipient) -> Result<Uuid, Error> {
+    if let Recipient::Worker(worker_id) = recipient {
+        Ok(worker_id)
+    } else {
+        bail!("command requires worker")
+    }
+}
+
 async fn read_msg(rx: &mut pipe::Receiver) -> Result<Message, Error> {
     let mut bytes = [0u8; 4];
     rx.read_exact(&mut bytes).await?;
@@ -403,4 +443,17 @@ async fn send_msg(tx: &mut MutexGuard<'_, pipe::Sender>, msg: Message) -> Result
     tx.write_all(&prefix[..]).await?;
     tx.write_all(&buf[..]).await?;
     Ok(())
+}
+
+impl Listener {
+    pub async fn connect(addr: SocketAddr) -> Result<Listener, Error> {
+        Ok(Listener {
+            listener: TcpListener::bind(addr).await?,
+        })
+    }
+
+    pub async fn accept(&mut self) -> Result<(), Error> {
+        let (stream, addr) = self.listener.accept().await?;
+        Ok(())
+    }
 }

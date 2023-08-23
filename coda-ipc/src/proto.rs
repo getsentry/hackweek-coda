@@ -31,6 +31,7 @@ pub enum Cmd {
     GetTaskResult(GetTaskResult),
     SpawnWorkflow(Workflow),
     ExecuteWorkflow(Workflow),
+    WorkflowEnded(WorkflowEnded),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -98,4 +99,9 @@ pub struct Workflow {
     pub workflow_name: String,
     pub workflow_run_id: Uuid,
     pub params_id: Uuid,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WorkflowEnded {
+    pub workflow_run_id: Uuid,
 }
