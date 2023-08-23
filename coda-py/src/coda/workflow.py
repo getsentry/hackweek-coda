@@ -26,7 +26,7 @@ class WorkflowContext:
             [self.workflow_run_id, task_name] + list(persistence_key)
         )
 
-        logging.info(f"Spawning task {task_name} in workflow {self.workflow_name}")
+        logging.debug(f"Spawning task {task_name} in workflow {self.workflow_name}")
 
         # We store the parameters of the function as a separate process.
         params_id = generate_uuid()
@@ -60,7 +60,7 @@ class WorkflowContext:
         workflow_name = workflow_function.__workflow_name__
         workflow_run_id = generate_uuid()
 
-        logging.info(f"Spawning workflow {workflow_name} in workflow {self.workflow_name}")
+        logging.debug(f"Spawning workflow {workflow_name} in workflow {self.workflow_name}")
 
         # We store the workflow parameter as a separate process.
         params_id = generate_uuid()

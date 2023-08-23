@@ -11,6 +11,7 @@ from coda.utils import generate_uuid
 def _default_message_condition(_type, request_id, **kwargs):
     def inner(value):
         message_type = value["type"]
+        # This is supposedly coming in as bytes.
         message_request_id = value.get("request_id")
 
         return message_type == _type and message_request_id == request_id.bytes
@@ -59,8 +60,9 @@ class CborSupervisorAPI(SupervisorAPI):
 
     def _write_to_pipe(self, data):
         msg = cbor2.dumps(data)
-        self.tx.write(struct.pack('!i', len(msg)))
+        self.tx.write(struct.pack('!i', len(msg)) + msg)
         self.tx.write(msg)
+        self.tx.flush()
 
     def _read_from_pipe(self):
         msg = self.rx.read(4)
@@ -74,10 +76,10 @@ class CborSupervisorAPI(SupervisorAPI):
         return cbor2.loads(bytes_vals)
 
     def make_request(self, cmd, args):
-        request_id = generate_uuid().bytes
+        request_id = generate_uuid()
         request = {
             "type": "req",
-            "request_id": request_id,
+            "request_id": request_id.bytes,
             "cmd": cmd,
             "args": args,
         }
