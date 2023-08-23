@@ -36,7 +36,7 @@ class Worker(Listener):
         logging.debug(f"Registering {len(self.supported_tasks)} tasks and {len(self.supported_workflows)} workflows")
         self.supervisor.register_worker(
             tasks=[task.__task_name__ for task in self.supported_tasks],
-            workflows=[workflow.__workflow_name__ for workflow in self.supported_tasks]
+            workflows=[workflow.__workflow_name__ for workflow in self.supported_workflows]
         )
 
     async def _loop(self):

@@ -9,11 +9,12 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 async def run():
-    # TODO: will be configured from upstream.
-    url = "localhost:2233"
-    supervisor = Supervisor(url)
-
-    worker = Worker(supervisor=supervisor, tasks=[], workflows=[my_workflow])
+    supervisor = Supervisor()
+    worker = Worker(
+        supervisor=supervisor,
+        tasks=[],
+        workflows=[my_workflow]
+    )
     await worker.run()
 
 

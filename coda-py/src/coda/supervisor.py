@@ -3,6 +3,7 @@ import struct
 from abc import ABC, abstractmethod
 
 import cbor2
+
 from coda.interest import Signal
 from coda.utils import generate_uuid
 
@@ -100,9 +101,13 @@ class CborSupervisorAPI(SupervisorAPI):
 
 class Supervisor:
 
-    def __init__(self, url):
-        self._api = CborSupervisorAPI(url)
+    def __init__(self, api=None):
+        self._api = api
         self._listener = None
+
+    @classmethod
+    def default(cls, url=None):
+        return cls(api=CborSupervisorAPI(url))
 
     async def _make_request_and_wait(self, cmd, args):
         request = self._api.make_request(cmd, args)
