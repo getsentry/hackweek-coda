@@ -92,6 +92,7 @@ class CborSupervisorAPI(SupervisorAPI):
             return
 
         data = cbor2.loads(bytes_vals)
+        logging.debug(f"Reading {data} from the read pipe")
         return data
 
     async def make_request(self, cmd, args, has_response=False):

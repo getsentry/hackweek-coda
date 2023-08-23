@@ -1,4 +1,4 @@
-from application.tasks import sum_two_numbers
+from application.tasks import sum_two_numbers, divide_by
 from coda.workflow import coda_workflow
 
 
@@ -12,5 +12,14 @@ async def my_workflow(context, x):
         [a, b],
         {"a": a, "b": b}
     )
-    result = await task_handle
-    return result
+    sum = await task_handle
+
+    # by = 5
+    # task_handle = await context.spawn_task(
+    #     divide_by,
+    #     [sum, by],
+    #     {"x": sum, "y": by}
+    # )
+    # division = await task_handle
+
+    print(f"Workflow has completed with result {sum}")
