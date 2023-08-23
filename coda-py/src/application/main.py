@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+from application.tasks import sum_two_numbers
 from application.workflows import my_workflow
 from coda.supervisor import Supervisor
 from coda.worker import Worker
@@ -13,7 +14,7 @@ async def run():
     supervisor = Supervisor.default()
     worker = Worker(
         supervisor=supervisor,
-        tasks=[],
+        tasks=[sum_two_numbers],
         workflows=[my_workflow]
     )
 

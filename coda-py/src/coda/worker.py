@@ -27,11 +27,9 @@ class Worker(Listener):
         # Signal used to stop the execution of the main loop from another coroutine.
         self._stop_signal = asyncio.Queue(maxsize=1)
 
-    async def run(self, start_workflows=False):
+    async def run(self):
         self.supervisor.attach_listener(self)
         self._register()
-        if start_workflows:
-            self._start_workflows()
         await self._loop()
 
     def listen_for(self, signal, condition):
@@ -117,6 +115,7 @@ class Worker(Listener):
                 break
 
         if matching_interest is None:
+            logging.debug("No interest found")
             return False
 
         await matching_interest.satisfy(message)
@@ -140,11 +139,12 @@ class Worker(Listener):
             logging.warning(f"Workflow {workflow_name} is not supported in this worker")
             return
 
-        # We register a workflow context, which will encapsulate the logic to drive a workflow.
-        workflow_context = WorkflowContext(self, self.supervisor, workflow_name, workflow_run_id)
+        logging.debug(f"Executing workflow {workflow_name}")
 
+        # We register a workflow context, which will encapsulate the logic to drive a workflow.
+        workflow_context = WorkflowContext(self.supervisor, workflow_name, workflow_run_id)
         # We fetch the params and run the workflow.
-        workflow_params = await self.supervisor.get_params(params_id)
+        workflow_params = await self.supervisor.get_params(workflow_run_id, params_id)
         await found_workflow(workflow_context, **workflow_params)
 
         return MessageHandlingResult.SUCCESS
@@ -167,8 +167,10 @@ class Worker(Listener):
             logging.warning(f"Task {task_name} is not supported in this worker")
             return
 
+        logging.debug(f"Executing task {task_name}")
+
         # We fetch the params and run the task.
-        task_params = await self.supervisor.get_params(params_id=params_id)
+        task_params = await self.supervisor.get_params(workflow_run_id, params_id)
         result = await found_task(**task_params)
         if persist_result:
             logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")

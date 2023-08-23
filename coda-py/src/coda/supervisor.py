@@ -7,6 +7,8 @@ import cbor2
 from coda.interest import Signal
 from coda.utils import generate_uuid
 
+import logging
+
 
 def _default_message_condition(_type, request_id, **kwargs):
     def inner(value):
@@ -59,9 +61,9 @@ class CborSupervisorAPI(SupervisorAPI):
         self.tx = open(os.environ.get("CODA_WORKER_WRITE_PATH", ""), "wb")
 
     def _write_to_pipe(self, data):
+        logging.debug(f"Writing {data} to the write pipe")
         msg = cbor2.dumps(data)
         self.tx.write(struct.pack('!i', len(msg)) + msg)
-        self.tx.write(msg)
         self.tx.flush()
 
     def _read_from_pipe(self):
@@ -73,7 +75,8 @@ class CborSupervisorAPI(SupervisorAPI):
         if not bytes_vals:
             return
 
-        return cbor2.loads(bytes_vals)
+        data = cbor2.loads(bytes_vals)
+        return data
 
     def make_request(self, cmd, args, has_response=False):
         request = {
@@ -84,7 +87,7 @@ class CborSupervisorAPI(SupervisorAPI):
 
         request_id = generate_uuid()
         if has_response:
-            request["request_id"] = request_id
+            request["request_id"] = request_id.bytes
 
         self._write_to_pipe(request)
         return SupervisorRequest(cmd, request_id)
@@ -146,10 +149,11 @@ class Supervisor:
             }
         )
 
-    async def get_params(self, params_id):
+    async def get_params(self, workflow_run_id, params_id):
         return await self._make_request_and_wait(
             cmd="get_params",
             args={
+                "workflow_run_id": workflow_run_id.bytes,
                 "params_id": params_id.bytes
             }
         )
