@@ -1,10 +1,8 @@
 import os
 import struct
-import uuid
 from abc import ABC, abstractmethod
 
 import cbor2
-
 from coda.interest import Signal
 from coda.utils import generate_uuid
 
