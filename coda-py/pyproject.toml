@@ -16,6 +16,9 @@ requires-python = ">= 3.8"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/coda", "src/application"]
+
 [tool.rye]
 managed = true
 dev-dependencies = [
