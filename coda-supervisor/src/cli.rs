@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Error;
@@ -29,11 +30,14 @@ enum Commands {
 
 #[derive(Parser, Debug)]
 pub struct RunCommand {
+    /// Overrides the listen address.
+    #[arg(short = 'l', long)]
+    listen_addr: Option<SocketAddr>,
     /// The number of workers to spawn.
-    #[arg(short = 'n', long = "worker-count")]
+    #[arg(short = 'n', long)]
     worker_count: Option<usize>,
     /// Path to the config file.
-    #[arg(short = 'c', long = "config")]
+    #[arg(short = 'c', long)]
     config: Option<PathBuf>,
     /// The command and it's arguments to execute as worker.
     #[arg(last = true)]
@@ -48,7 +52,10 @@ async fn run(cmd: RunCommand) -> Result<(), Error> {
     if let Some(n) = cmd.worker_count {
         config.set_worker_count(n);
     }
-    let mut controller = Controller::new(&cmd.args, config)?;
+    if let Some(addr) = cmd.listen_addr {
+        config.set_listen_addr(addr);
+    }
+    let mut controller = Controller::new(&cmd.args, config).await?;
     controller.run().await?;
     Ok(())
 }

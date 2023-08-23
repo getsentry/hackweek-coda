@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::controller::Recipient;
 
 #[derive(Debug)]
 pub struct InMemoryQueue<T> {
@@ -49,7 +50,7 @@ pub(crate) struct Storage {
     workflow_queues: HashMap<String, InMemoryQueue<Workflow>>,
     // TODO: add expiration
     task_results: HashMap<(Uuid, Uuid), Value>,
-    task_result_interests: HashMap<(Uuid, Uuid), HashSet<(Uuid, Uuid)>>,
+    task_result_interests: HashMap<(Uuid, Uuid), HashSet<(Recipient, Uuid)>>,
 }
 
 impl Storage {
@@ -82,7 +83,7 @@ impl Storage {
         workflow_run_id: Uuid,
         task_key: Uuid,
         result: Value,
-    ) -> Option<HashSet<(Uuid, Uuid)>> {
+    ) -> Option<HashSet<(Recipient, Uuid)>> {
         self.task_results
             .insert((workflow_run_id, task_key), result);
         self.task_result_interests
@@ -104,13 +105,13 @@ impl Storage {
         &mut self,
         workflow_run_id: Uuid,
         task_key: Uuid,
-        worker_id: Uuid,
+        recipient: Recipient,
         request_id: Uuid,
     ) {
         self.task_result_interests
             .entry((workflow_run_id, task_key))
             .or_default()
-            .insert((worker_id, request_id));
+            .insert((recipient, request_id));
     }
 
     /// Publishes a task to a specific queue.

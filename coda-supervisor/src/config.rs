@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::net::SocketAddr;
 use std::path::Path;
 
 use anyhow::{Context, Error};
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug)]
 struct ConfigValues {
     #[serde(default)]
-    workers: WorkersConfigValues,
+    supervisor: SupervisorConfigValues,
     #[serde(default)]
     task_queues: HashMap<String, HashSet<String>>,
     #[serde(default)]
@@ -16,13 +17,17 @@ struct ConfigValues {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct WorkersConfigValues {
-    count: usize,
+struct SupervisorConfigValues {
+    listen_addr: Option<SocketAddr>,
+    worker_count: usize,
 }
 
-impl Default for WorkersConfigValues {
+impl Default for SupervisorConfigValues {
     fn default() -> Self {
-        Self { count: 4 }
+        Self {
+            listen_addr: None,
+            worker_count: 4,
+        }
     }
 }
 
@@ -35,7 +40,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             values: ConfigValues {
-                workers: WorkersConfigValues::default(),
+                supervisor: SupervisorConfigValues::default(),
                 task_queues: HashMap::new(),
                 workflow_queues: HashMap::new(),
             },
@@ -100,11 +105,21 @@ impl Config {
 
     /// Returns the worker count.
     pub fn worker_count(&self) -> usize {
-        self.values.workers.count
+        self.values.supervisor.worker_count
     }
 
     /// Force overrides the worker count.
     pub fn set_worker_count(&mut self, n: usize) {
-        self.values.workers.count = n;
+        self.values.supervisor.worker_count = n;
+    }
+
+    /// Returns the listen addr.
+    pub fn listen_addr(&self) -> Option<SocketAddr> {
+        self.values.supervisor.listen_addr
+    }
+
+    /// Force overrides the listen addr.
+    pub fn set_listen_addr(&mut self, addr: SocketAddr) {
+        self.values.supervisor.listen_addr = Some(addr);
     }
 }
