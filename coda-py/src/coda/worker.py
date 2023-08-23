@@ -49,9 +49,10 @@ class Worker(Listener):
         while self._is_active():
             message = self.supervisor.consume_next_message()
             logging.debug(f"Received next message {message}")
-            task_name = "ProcessMessage"
-            new_task = asyncio.create_task(self._process_message(message), name=task_name)
+
+            new_task = asyncio.create_task(self._process_message(message), name="ProcessMessage")
             tasks.append(new_task)
+
             # We want to yield, in order to the task to actually run, since we are single threaded.
             await asyncio.sleep(0.0)
 

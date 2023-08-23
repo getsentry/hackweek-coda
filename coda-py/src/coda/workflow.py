@@ -52,6 +52,7 @@ class WorkflowContext:
         return TaskHandle(
             supervisor=self.supervisor,
             workflow_name=self.workflow_name,
+            workflow_run_id=self.workflow_run_id,
             task_id=task_id,
             task_key=task_key
         )

@@ -3,7 +3,10 @@ from coda.workflow import coda_workflow
 
 
 @coda_workflow(workflow_name="MyWorkflow")
-async def my_workflow(context, a, b):
+async def my_workflow(context, x):
+    a = x * 10
+    b = x + 30
+
     task_handle = context.spawn_task(
         sum_two_numbers,
         [a, b],

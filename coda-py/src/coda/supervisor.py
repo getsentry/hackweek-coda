@@ -181,12 +181,14 @@ class Supervisor:
             }
         )
 
-    async def get_task_result(self, task_key):
+    async def get_task_result(self, workflow_run_id, task_key):
         return await self._make_request_and_wait(
             cmd="get_task_result",
             args={
+                "workflow_run_id": workflow_run_id.bytes,
                 "task_key": task_key
-            })
+            }
+        )
 
     def spawn_workflow(self, workflow_name, workflow_run_id, params_id):
         return self._api.make_request(
