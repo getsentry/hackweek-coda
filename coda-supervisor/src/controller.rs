@@ -27,6 +27,7 @@ use tracing::{event, Level};
 use uuid::Uuid;
 
 use coda_ipc::{Cmd, Event, Message, Req, Resp, Task, WorkerDied, Workflow};
+use valuable::Valuable;
 
 use crate::config::Config;
 use crate::storage::{DequeuedItem, Storage};
@@ -197,13 +198,25 @@ impl Controller {
                 .map(|x| Either::Left(x.accept()))
                 .unwrap_or(Either::Right(futures::future::pending())) => {}
             item = self.storage.dequeue() => {
-                event!(Level::DEBUG, "pull {:?}", &item);
                 // XXX: this basically always gives it to the same worker
                 // and even when the worker is busy.
                 match item {
                     DequeuedItem::Task(task) => {
+                        event!(
+                            Level::DEBUG,
+                            task_id = display(task.task_id),
+                            task_name = task.task_name,
+                            workflow_run_id = display(task.workflow_run_id),
+                            "enqueue task"
+                        );
                         if !self.storage.workflow_is_live(task.workflow_run_id) {
-                            event!(Level::INFO, "Dropping task for dead workflow '{}'", task.workflow_run_id);
+                            event!(
+                                Level::INFO,
+                                task_id = display(task.task_id),
+                                task_name = task.task_name,
+                                workflow_run_id = display(task.workflow_run_id),
+                                "dropped task for dead workflow"
+                            );
                             return Ok(());
                         }
                         for worker in self.workers.iter() {
@@ -215,9 +228,20 @@ impl Controller {
                                 return Ok(());
                             }
                         }
-                        bail!("could not find worker for task '{}'", task.task_name);
+                        event!(
+                            Level::ERROR,
+                            task_id = display(&task.task_id),
+                            task_name = task.task_name,
+                            "unable to find worker for task name"
+                        );
                     }
                     DequeuedItem::Workflow(workflow) => {
+                        event!(
+                            Level::DEBUG,
+                            workflow_run_id = display(&workflow.workflow_run_id),
+                            workflow_name = workflow.workflow_name,
+                            "enqueue workflow"
+                        );
                         for worker in self.workers.iter() {
                             if worker.state.workflows.contains(&workflow.workflow_name) {
                                 self.storage.mark_workflow_started(worker.worker_id);
@@ -228,7 +252,12 @@ impl Controller {
                                 return Ok(());
                             }
                         }
-                        bail!("could not find worker for workflow '{}'", workflow.workflow_name);
+                        event!(
+                            Level::ERROR,
+                            workflow_run_id = display(workflow.workflow_run_id),
+                            workflow_name = workflow.workflow_name,
+                            "unable to find worker for workflow name"
+                        );
                     }
                 }
             }
@@ -237,7 +266,7 @@ impl Controller {
     }
 
     async fn handle_message(&mut self, recipient: Recipient, msg: Message) -> Result<(), Error> {
-        event!(Level::DEBUG, "worker message {:?}", msg);
+        event!(Level::DEBUG, msg = debug(&msg), "worker message");
         match msg {
             Message::Req(req) => {
                 let request_id = req.request_id;
@@ -256,7 +285,12 @@ impl Controller {
     async fn handle_event(&mut self, _recipient: Recipient, event: Event) -> Result<(), Error> {
         match event {
             Event::WorkerDied(cmd) => {
-                println!("worker {} died (status = {:?})", cmd.worker_id, cmd.status);
+                event!(
+                    Level::ERROR,
+                    worker_id = display(cmd.worker_id),
+                    exit_status = cmd.status,
+                    "worker died"
+                );
                 self.workers.retain(|x| x.worker_id != cmd.worker_id);
                 if !self.shutting_down {
                     // TODO: backoff and stuff
@@ -276,9 +310,15 @@ impl Controller {
             Cmd::RegisterWorker(cmd) => {
                 let worker_id = require_worker(recipient)?;
                 let worker = self.get_worker_mut(worker_id)?;
+                event!(
+                    Level::DEBUG,
+                    worker_id = display(worker_id),
+                    tasks = cmd.tasks.as_value(),
+                    workflows = cmd.workflows.as_value(),
+                    "worker registered",
+                );
                 worker.state.tasks = cmd.tasks;
                 worker.state.workflows = cmd.workflows;
-                event!(Level::DEBUG, "worker registered {:?}", worker.state);
                 Some(Value::Null)
             }
             Cmd::StoreParams(cmd) => {
@@ -305,6 +345,13 @@ impl Controller {
                     .storage
                     .has_task_result(task.workflow_run_id, task.task_key)
                 {
+                    event!(
+                        Level::DEBUG,
+                        task_id = display(task.task_id),
+                        task_key = display(task.task_key),
+                        task_name = task.task_name,
+                        "enqueue task",
+                    );
                     self.enqueue_task(task).await?;
                 }
                 Some(Value::Null)
@@ -350,11 +397,22 @@ impl Controller {
                 Some(Value::Null)
             }
             Cmd::SpawnWorkflow(workflow) => {
+                event!(
+                    Level::DEBUG,
+                    workflow_run_id = display(workflow.workflow_run_id),
+                    workflow_name = workflow.workflow_name,
+                    "enqueue and register workflow",
+                );
                 self.storage.register_workflow(workflow.workflow_run_id);
                 self.enqueue_workflow(workflow).await?;
                 Some(Value::Null)
             }
             Cmd::WorkflowEnded(cmd) => {
+                event!(
+                    Level::DEBUG,
+                    workflow_run_id = display(cmd.workflow_run_id),
+                    "finish workflow",
+                );
                 self.storage.finish_workflow(cmd.workflow_run_id);
                 None
             }
@@ -422,9 +480,7 @@ async fn spawn_worker(
             .name(&format!("w-{}:read", &worker_id))
             .spawn(async move {
                 loop {
-                    println!("read for worker {}", worker_id);
                     let msg = read_msg(&mut rx).await;
-                    println!("done reading for worker {}", worker_id);
                     let failed = msg.is_err();
                     if mainloop_tx
                         .send((Recipient::Worker(worker_id), msg))
