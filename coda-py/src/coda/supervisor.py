@@ -147,13 +147,20 @@ class CborTCPSupervisorAPI(SupervisorAPI):
         msg = cbor2.dumps(data)
 
         _, tx = await self._open_socket()
-        tx.write(msg)
+        tx.write(struct.pack('!i', len(msg)) + msg)
         await tx.drain()
 
     async def _read_from_socket(self):
         rx, _ = await self._open_socket()
 
+        msg = await rx.read(4)
+        if not msg:
+            return None
+
         bytes_vals = await rx.read()
+        if not bytes_vals:
+            return None
+
         data = cbor2.loads(bytes_vals)
         logging.debug(f"Read {data} from the read pipe")
 
