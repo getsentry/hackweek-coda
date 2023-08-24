@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.DEBUG)
 async def run():
     client = coda.Client("127.0.0.1:42069")
     event_data = {
-        "id": 1,
+        "event_id": 1,
         "sdk": "javascript"
     }
     await client.run(process_event, {"project_id": 1, "event_data": event_data})
