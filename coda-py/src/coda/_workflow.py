@@ -31,12 +31,14 @@ class Workflow:
 class WorkflowContext(Context):
 
     def __init__(self, dispatch, supervisor, workflow_name=None, workflow_run_id=None):
+        # The dispatch will accept a coroutine, which is fine in principle but only iff they will be guaranteed
+        # to be executed on the same event loop.
         self._dispatch = dispatch
         self._supervisor = supervisor
         self._workflow_name = workflow_name
         self._workflow_run_id = workflow_run_id
 
-    async def spawn_task(self, task_function, args, cache_key=None):
+    def spawn_task(self, task_function, args, cache_key=None):
         task_name = task_function.__coda_task__.task_name
         task_key = hash_cache_key(
             [self._workflow_run_id, task_name] + list(cache_key or [])
@@ -75,7 +77,7 @@ class WorkflowContext(Context):
             task_key=task_key
         )
 
-    async def spawn_workflow(self, workflow_function, args):
+    def spawn_workflow(self, workflow_function, args):
         workflow_name = workflow_function.__coda_workflow__.workflow_name
         workflow_run_id = generate_uuid()
 
@@ -83,15 +85,17 @@ class WorkflowContext(Context):
 
         # We store the workflow parameter as a separate process.
         params_id = generate_uuid()
-        await self._supervisor.store_params(
+        store_params = self._supervisor.store_params(
             workflow_run_id=workflow_run_id,
             params_id=params_id,
             params=args
         )
+        self._dispatch(store_params)
 
         # We spawn the workflow.
-        await self._supervisor.spawn_workflow(
+        spawn_workflow = self._supervisor.spawn_workflow(
             workflow_name=workflow_name,
             workflow_run_id=workflow_run_id,
             params_id=params_id
         )
+        self._dispatch(spawn_workflow)

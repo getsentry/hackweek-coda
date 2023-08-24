@@ -80,6 +80,8 @@ class Worker(Listener):
                 self._shutdown_worker()
                 return
 
+            logging.debug(f"Received message {message}")
+
             handling_result = await self._handle_message(message)
 
             # If the worker is told to stop, we immediately break out of the loop.
