@@ -16,8 +16,8 @@ def task(task_name=None):
 
 
 class Task:
-    def __init__(self, name, func):
-        self.task_name = name
+    def __init__(self, task_name, func):
+        self.task_name = task_name
         self._func = weakref(func)
 
     def __call__(self, *args, **kwargs):

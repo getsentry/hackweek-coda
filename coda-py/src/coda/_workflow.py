@@ -20,8 +20,8 @@ def workflow(workflow_name=None):
 
 
 class Workflow:
-    def __init__(self, name, func):
-        self.workflow_name = name
+    def __init__(self, workflow_name, func):
+        self.workflow_name = workflow_name
         self._func = weakref(func)
 
     def __call__(self, *args, **kwargs):
