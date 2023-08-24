@@ -11,6 +11,7 @@ use anyhow::{anyhow, Error};
 use ciborium::Value;
 use coda_ipc::Task;
 use coda_ipc::Workflow;
+use coda_ipc::WorkflowStatus;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use tokio::sync::mpsc;
@@ -43,14 +44,20 @@ pub enum DequeuedItem {
     Workflow(Workflow),
 }
 
+#[derive(Debug)]
+struct WorkflowState {
+    task_results: HashMap<Uuid, Value>,
+    task_result_interests: HashMap<Uuid, HashSet<(Recipient, Uuid)>>,
+    status: WorkflowStatus,
+    // TODO: add expiration
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Storage {
     pub(crate) params: HashMap<(Uuid, Uuid), Arc<BTreeMap<String, Value>>>,
     task_queues: HashMap<String, InMemoryQueue<Task>>,
     workflow_queues: HashMap<String, InMemoryQueue<Workflow>>,
-    // TODO: add expiration
-    task_results: HashMap<(Uuid, Uuid), Value>,
-    task_result_interests: HashMap<(Uuid, Uuid), HashSet<(Recipient, Uuid)>>,
+    workflow_state: HashMap<Uuid, WorkflowState>,
 }
 
 impl Storage {
@@ -69,9 +76,29 @@ impl Storage {
             params: HashMap::new(),
             task_queues,
             workflow_queues,
-            task_results: HashMap::new(),
-            task_result_interests: HashMap::new(),
+            workflow_state: HashMap::new(),
         }
+    }
+
+    pub fn register_workflow(&mut self, workflow_run_id: Uuid) {
+        self.workflow_state.insert(
+            workflow_run_id,
+            WorkflowState {
+                task_results: HashMap::new(),
+                task_result_interests: HashMap::new(),
+                status: WorkflowStatus::Enqueued,
+            },
+        );
+    }
+
+    pub fn mark_workflow_started(&mut self, workflow_run_id: Uuid) {
+        if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
+            workflow_state.status = WorkflowStatus::InProgress;
+        }
+    }
+
+    pub fn finish_workflow(&mut self, workflow_run_id: Uuid) {
+        self.workflow_state.remove(&workflow_run_id);
     }
 
     /// Stores a result.
@@ -84,20 +111,27 @@ impl Storage {
         task_key: Uuid,
         result: Value,
     ) -> Option<HashSet<(Recipient, Uuid)>> {
-        self.task_results
-            .insert((workflow_run_id, task_key), result);
-        self.task_result_interests
-            .remove(&(workflow_run_id, task_key))
+        if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
+            workflow_state.task_results.insert(task_key, result);
+            workflow_state.task_result_interests.remove(&task_key)
+        } else {
+            None
+        }
     }
 
     /// Retrieves a result.
-    pub fn get_task_result(&mut self, workflow_run_id: Uuid, task_key: Uuid) -> Option<Value> {
-        self.task_results.get(&(workflow_run_id, task_key)).cloned()
+    pub fn get_task_result(&self, workflow_run_id: Uuid, task_key: Uuid) -> Option<Value> {
+        self.workflow_state
+            .get(&workflow_run_id)
+            .and_then(|x| x.task_results.get(&task_key))
+            .cloned()
     }
 
     /// Checks if a result exists.
-    pub fn has_task_result(&mut self, workflow_run_id: Uuid, task_key: Uuid) -> bool {
-        self.task_results.contains_key(&(workflow_run_id, task_key))
+    pub fn has_task_result(&self, workflow_run_id: Uuid, task_key: Uuid) -> bool {
+        self.workflow_state
+            .get(&workflow_run_id)
+            .map_or(false, |x| x.task_results.contains_key(&task_key))
     }
 
     /// Register a result interest.
@@ -108,10 +142,13 @@ impl Storage {
         recipient: Recipient,
         request_id: Uuid,
     ) {
-        self.task_result_interests
-            .entry((workflow_run_id, task_key))
-            .or_default()
-            .insert((recipient, request_id));
+        if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
+            workflow_state
+                .task_result_interests
+                .entry(task_key)
+                .or_default()
+                .insert((recipient, request_id));
+        }
     }
 
     /// Publishes a task to a specific queue.

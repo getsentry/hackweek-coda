@@ -105,3 +105,11 @@ pub struct Workflow {
 pub struct WorkflowEnded {
     pub workflow_run_id: Uuid,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum WorkflowStatus {
+    Enqueued,
+    InProgress,
+    Success,
+    Failed,
+}
