@@ -8,7 +8,7 @@ def needs_symbolication(event_data):
 
 
 @coda.workflow()
-async def process_event(project_id, event_data):
+async def process_event(project_id, event_data, **kwargs):
     event_data = await coda.context.spawn_task(
         normalize_event,
         args={"project_id": project_id, "event_data": event_data},
