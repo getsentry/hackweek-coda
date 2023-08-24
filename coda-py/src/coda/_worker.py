@@ -35,12 +35,14 @@ class Worker(Listener):
             for w in workflows
         }
 
-        # Signal used to stop the execution of the main loop from another coroutine.
-        self._stop_signal = asyncio.Queue(maxsize=1)
+        # Contains the messages that need to go out.
+        self._outgoing_requests = asyncio.Queue(maxsize=20)
+        # Signals the main loop that the worker needs to shut down.
+        self._shutdown_event = asyncio.Event()
 
     async def run(self):
         await self._register()
-        await self._loop()
+        await self._main_loop()
 
     async def _register(self):
         logging.debug(f"Registering {len(self._supported_tasks)} tasks and {len(self._supported_workflows)} workflows")
@@ -49,42 +51,44 @@ class Worker(Listener):
             workflows=list(self._supported_workflows.keys())
         )
 
-    async def _loop(self):
+    async def _main_loop(self):
         # We want to wait for all signals.
         async with asyncio.TaskGroup() as tg:
-            while self._is_active():
-                message = await self.supervisor.consume_next_message()
-                logging.debug(f"Received next message {message}")
+            tg.create_task(self._process_outgoing_messages(), name="ProcessOutgoingMessages")
+            tg.create_task(self._process_incoming_messages(), name="ProcessIncomingMessages")
 
-                tg.create_task(self._process_message(message), name=_name_from_message(message))
+        # We make sure that the worker was told to be shutdown.
+        await self._shutdown_event.wait()
+        logging.debug(f"Worker shutdown")
 
-                # We want to yield, in order to the task to actually run, since we are single threaded.
-                await asyncio.sleep(0.0)
+    def _shutdown_worker(self):
+        return self._shutdown_event.set()
 
-        # We make sure that the worker was told to be stopped.
-        reason = await self._stop_signal.get()
-        logging.debug(f"Worker stopped for reason: {reason}")
+    def _is_shutdown(self):
+        return self._shutdown_event.is_set()
 
-    def _is_active(self):
-        return self._stop_signal.empty()
+    async def _process_outgoing_messages(self):
+        while not self._is_shutdown():
+            request_coro = await self._outgoing_requests.get()
+            # The queue will contain coroutines for fetching remote tasks.
+            await request_coro
 
-    async def _stop_loop(self, reason=""):
-        await self._stop_signal.put(reason)
+    async def _process_incoming_messages(self):
+        while not self._is_shutdown():
+            message = await self.supervisor.consume_next_message()
+            if message is None:
+                self._shutdown_worker()
+                return
 
-    async def _process_message(self, message):
-        if message is None:
-            await self._stop_loop(reason="Received None message from the supervisor")
-            return
+            handling_result = await self._handle_message(message)
 
-        handling_result = await self._handle_message(message)
-
-        # If the worker is told to stop, we immediately break out of the loop.
-        if handling_result == MessageHandlingResult.STOP:
-            await self._stop_loop(reason="Received a shutdown message from the supervisor")
-        elif handling_result == MessageHandlingResult.NOT_SUPPORTED:
-            logging.warning(f"Message {message} is not supported")
-        elif handling_result == MessageHandlingResult.ERROR:
-            raise RuntimeError(f"An error occurred while handling the message {message}")
+            # If the worker is told to stop, we immediately break out of the loop.
+            if handling_result == MessageHandlingResult.STOP:
+                self._shutdown_worker()
+            elif handling_result == MessageHandlingResult.NOT_SUPPORTED:
+                logging.warning(f"Message {message} is not supported")
+            elif handling_result == MessageHandlingResult.ERROR:
+                raise RuntimeError(f"An error occurred while handling the message {message}")
 
     async def _handle_message(self, message):
         if await self._check_possible_interests(message):
@@ -112,8 +116,11 @@ class Worker(Listener):
             logging.warning(f"Workflow {workflow_name} is not supported in this worker")
             return
 
+        def dispatch(coro):
+            self._outgoing_requests.put_nowait(coro)
+
         # We register a workflow context, which will encapsulate the logic to drive a workflow.
-        workflow_context = WorkflowContext(self.supervisor, workflow_name, workflow_run_id)
+        workflow_context = WorkflowContext(dispatch, workflow_name, workflow_run_id)
         with workflow_context:
             # We fetch the params and run the workflow.
             workflow_params = await self.supervisor.get_params(workflow_run_id, params_id)
