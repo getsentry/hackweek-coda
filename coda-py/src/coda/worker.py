@@ -108,10 +108,11 @@ class Worker(Listener):
 
         # We register a workflow context, which will encapsulate the logic to drive a workflow.
         workflow_context = WorkflowContext(self.supervisor, workflow_name, workflow_run_id)
-        # We fetch the params and run the workflow.
-        workflow_params = await self.supervisor.get_params(workflow_run_id, params_id)
-        logging.debug(f"Executing workflow {workflow_name}")
-        await found_workflow(workflow_context, **workflow_params)
+        with workflow_context:
+            # We fetch the params and run the workflow.
+            workflow_params = await self.supervisor.get_params(workflow_run_id, params_id)
+            logging.debug(f"Executing workflow {workflow_name}")
+            await found_workflow(**workflow_params)
 
         return MessageHandlingResult.SUCCESS
 

@@ -1,9 +1,12 @@
 import logging
 
 
-def coda_task(task_name):
+def coda_task(task_name=None):
     def decorator(func):
-        func.__task_name__ = task_name
+        if task_name is None:
+            func.__task_name__ = func.__qualname__
+        else:
+            func.__task_name__ = task_name
 
         return func
 

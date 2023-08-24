@@ -1,14 +1,29 @@
-from application.tasks import sum_two_numbers
 from coda.workflow import coda_workflow
+from coda import context
+
+from .tasks import normalize_event, symbolicate_event, store_event
 
 
-@coda_workflow(workflow_name="MyWorkflow")
-async def my_workflow(context, x):
-    sum_task = await context.spawn_task(
-        task_function=sum_two_numbers,
-        a=x * 10,
-        b=x + 30
+def needs_symbolication(event_data):
+    return False
+
+@coda_workflow()
+async def process_event(project_id, event_data, **kwargs):
+    event_data = await context.spawn_task(
+        normalize_event,
+        args={"project_id": project_id, "event_data": event_data},
+        cache_key=[event_data["event_id"]]
     )
 
-    result = await sum_task
-    print(f"Workflow has completed with result {result}")
+    if needs_symbolication(event_data):
+        event_data = await context.spawn_task(
+            symbolicate_event,
+            args={"project_id": project_id, "event_data": event_data},
+            cache_key=[event_data["event_id"]]
+        )
+
+    result = await context.spawn_task(
+        store_event,
+        args={"project_id": project_id, "event_data": event_data},
+        cache_key=[event_data["event_id"]]
+    )
