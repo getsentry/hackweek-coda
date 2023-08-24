@@ -25,4 +25,4 @@ class Client(Listener):
             request_coro = await self._outgoing_requests.get()
             await request_coro
 
-        await asyncio.sleep(100)
+        await self.supervisor.close()

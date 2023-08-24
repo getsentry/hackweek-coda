@@ -47,6 +47,10 @@ class SupervisorAPI(ABC):
     def extract_response(self, response):
         pass
 
+    @abstractmethod
+    async def close(self):
+        pass
+
     async def get_response(self, listener, request):
         signal = Signal()
         listener.listen_for(signal, self.build_condition_for_response(request))
@@ -122,6 +126,9 @@ class CborPipeSupervisorAPI(SupervisorAPI):
     def extract_response(self, response):
         return response["result"]
 
+    async def close(self):
+        pass
+
 
 class CborTCPSupervisorAPI(SupervisorAPI):
 
@@ -192,6 +199,10 @@ class CborTCPSupervisorAPI(SupervisorAPI):
     def extract_response(self, response):
         return response["result"]
 
+    async def close(self):
+        if self.tx is not None:
+            self.tx.close()
+            await self.tx.wait_closed()
 
 class Supervisor:
 
@@ -216,6 +227,9 @@ class Supervisor:
 
     def attach_listener(self, listener):
         self._listener = listener
+
+    async def close(self):
+        await self._api.close()
 
     async def consume_next_message(self):
         return await self._api.get_next_message()

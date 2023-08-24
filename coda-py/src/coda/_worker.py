@@ -59,6 +59,8 @@ class Worker(Listener):
 
         # We make sure that the worker was told to be shutdown.
         await self._shutdown_event.wait()
+        # We close the connection to the supervisor.
+        self.supervisor.close()
         logging.debug(f"Worker shutdown")
 
     def _shutdown_worker(self):
@@ -70,27 +72,31 @@ class Worker(Listener):
     async def _process_outgoing_messages(self):
         while not self._is_shutdown():
             request_coro = await self._outgoing_requests.get()
+            logging.debug("Dispatching outgoing message")
             # The queue will contain coroutines for fetching remote tasks.
             await request_coro
 
     async def _process_incoming_messages(self):
-        while not self._is_shutdown():
-            message = await self.supervisor.consume_next_message()
-            if message is None:
-                self._shutdown_worker()
-                return
+        async with asyncio.TaskGroup() as tg:
+            while not self._is_shutdown():
+                message = await self.supervisor.consume_next_message()
+                tg.create_task(self._process_message(message), name=_name_from_message(message))
 
-            logging.debug(f"Received message {message}")
+    async def _process_message(self, message):
+        logging.debug(f"Received message {message}")
+        if message is None:
+            self._shutdown_worker()
+            return
 
-            handling_result = await self._handle_message(message)
+        handling_result = await self._handle_message(message)
 
-            # If the worker is told to stop, we immediately break out of the loop.
-            if handling_result == MessageHandlingResult.STOP:
-                self._shutdown_worker()
-            elif handling_result == MessageHandlingResult.NOT_SUPPORTED:
-                logging.warning(f"Message {message} is not supported")
-            elif handling_result == MessageHandlingResult.ERROR:
-                raise RuntimeError(f"An error occurred while handling the message {message}")
+        # If the worker is told to stop, we immediately break out of the loop.
+        if handling_result == MessageHandlingResult.STOP:
+            self._shutdown_worker()
+        elif handling_result == MessageHandlingResult.NOT_SUPPORTED:
+            logging.warning(f"Message {message} is not supported")
+        elif handling_result == MessageHandlingResult.ERROR:
+            raise RuntimeError(f"An error occurred while handling the message {message}")
 
     async def _handle_message(self, message):
         if await self._check_possible_interests(message):
@@ -126,7 +132,7 @@ class Worker(Listener):
         with workflow_context:
             # We fetch the params and run the workflow.
             workflow_params = await self.supervisor.get_params(workflow_run_id, params_id)
-            logging.debug(f"Executing workflow {workflow_name}")
+            logging.debug(f"Executing workflow {workflow_name} with params {workflow_params}")
             await found_workflow(**workflow_params)
 
         return MessageHandlingResult.SUCCESS
