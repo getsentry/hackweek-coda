@@ -216,6 +216,7 @@ impl Controller {
                     DequeuedItem::Workflow(workflow) => {
                         for worker in self.workers.iter() {
                             if worker.state.workflows.contains(&workflow.workflow_name) {
+                                self.storage.mark_workflow_started(worker.worker_id);
                                 self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Req {
                                     request_id: None,
                                     cmd: Cmd::ExecuteWorkflow(workflow),
@@ -345,11 +346,12 @@ impl Controller {
                 Some(Value::Null)
             }
             Cmd::SpawnWorkflow(workflow) => {
+                self.storage.register_workflow(workflow.workflow_run_id);
                 self.enqueue_workflow(workflow).await?;
                 Some(Value::Null)
             }
-            Cmd::WorkflowEnded(_cmd) => {
-                // todo: delete data of workflow
+            Cmd::WorkflowEnded(cmd) => {
+                self.storage.finish_workflow(cmd.workflow_run_id);
                 None
             }
             Cmd::ExecuteTask(_) | Cmd::ExecuteWorkflow(_) => {
