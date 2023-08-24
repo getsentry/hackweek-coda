@@ -99,6 +99,10 @@ pub struct Workflow {
     pub workflow_name: String,
     pub workflow_run_id: Uuid,
     pub params_id: Uuid,
+    #[serde(default)]
+    pub retry_policy: Option<RetryPolicy>,
+    #[serde(default)]
+    pub ttl_policy: Option<TtlPolicy>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -106,10 +110,21 @@ pub struct WorkflowEnded {
     pub workflow_run_id: Uuid,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 pub enum WorkflowStatus {
     Enqueued,
     InProgress,
     Failed,
     Success,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RetryPolicy {
+    pub max_retries: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TtlPolicy {
+    pub deadline: Option<f64>,
+    pub idle_timeout: Option<f64>,
 }
