@@ -85,11 +85,11 @@ class CborSupervisorAPI(SupervisorAPI):
         rx = await self._open_rx()
         msg = await rx.read(4)
         if not msg:
-            return
+            return None
 
         bytes_vals = await rx.read(struct.unpack('!i', msg)[0])
         if not bytes_vals:
-            return
+            return None
 
         data = cbor2.loads(bytes_vals)
         logging.debug(f"Reading {data} from the read pipe")

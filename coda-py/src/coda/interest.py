@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 
 
@@ -28,6 +29,32 @@ class Interest:
 
 
 class Listener(ABC):
+
+    def __init__(self):
+        self._interests = []
+
+    async def _check_possible_interests(self, message):
+        matching_index = None
+        matching_interest = None
+        logging.debug(f"Trying to satisfy message with the available {len(self._interests)} interests")
+
+        for index, interest in enumerate(self._interests):
+            if interest.matches(message):
+                logging.debug("Found a matching interest")
+                matching_index = index
+                matching_interest = interest
+                break
+
+        if matching_interest is None:
+            logging.debug("No interest found")
+            return False
+
+        await matching_interest.satisfy(message)
+
+        logging.debug("Satisfied interest")
+        del self._interests[matching_index]
+
+        return True
 
     @abstractmethod
     def listen_for(self, signal, condition):
