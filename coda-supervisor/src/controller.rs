@@ -404,6 +404,14 @@ impl Controller {
                     "enqueue and register workflow",
                 );
                 self.storage.register_workflow(workflow.workflow_run_id);
+                if let Some(ref policy) = workflow.retry_policy {
+                    self.storage
+                        .update_workflow_retry_policy(workflow.workflow_run_id, policy);
+                }
+                if let Some(ref policy) = workflow.ttl_policy {
+                    self.storage
+                        .update_workflow_ttl_policy(workflow.workflow_run_id, policy);
+                }
                 self.enqueue_workflow(workflow).await?;
                 Some(Value::Null)
             }

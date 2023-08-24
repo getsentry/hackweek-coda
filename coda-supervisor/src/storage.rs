@@ -6,10 +6,15 @@ use std::future::poll_fn;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
+use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use anyhow::{anyhow, Error};
 use ciborium::Value;
+use coda_ipc::RetryPolicy;
 use coda_ipc::Task;
+use coda_ipc::TtlPolicy;
 use coda_ipc::Workflow;
 use coda_ipc::WorkflowStatus;
 use rand::seq::SliceRandom;
@@ -49,7 +54,9 @@ struct WorkflowState {
     task_results: HashMap<Uuid, Value>,
     task_result_interests: HashMap<Uuid, HashSet<(Recipient, Uuid)>>,
     status: WorkflowStatus,
-    // TODO: add expiration
+    deadline: Option<SystemTime>,
+    next_idle_check: Option<SystemTime>,
+    max_retries: usize,
 }
 
 #[derive(Debug, Default)]
@@ -87,8 +94,28 @@ impl Storage {
                 task_results: HashMap::new(),
                 task_result_interests: HashMap::new(),
                 status: WorkflowStatus::Enqueued,
+                deadline: None,
+                next_idle_check: None,
+                max_retries: 0,
             },
         );
+    }
+
+    pub fn update_workflow_retry_policy(&mut self, workflow_run_id: Uuid, policy: &RetryPolicy) {
+        if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
+            workflow_state.max_retries = policy.max_retries;
+        }
+    }
+
+    pub fn update_workflow_ttl_policy(&mut self, workflow_run_id: Uuid, policy: &TtlPolicy) {
+        if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
+            workflow_state.deadline = policy
+                .deadline
+                .map(|x| UNIX_EPOCH + Duration::from_millis((x * 1000.0) as u64));
+            workflow_state.next_idle_check = policy
+                .idle_timeout
+                .map(|x| UNIX_EPOCH + Duration::from_millis((x * 1000.0) as u64));
+        }
     }
 
     pub fn mark_workflow_started(&mut self, workflow_run_id: Uuid) {
