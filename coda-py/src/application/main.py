@@ -5,7 +5,6 @@ from application.tasks import sum_two_numbers, divide_by
 from application.workflows import my_workflow
 from coda.supervisor import Supervisor
 from coda.worker import Worker
-from coda.workflow import WorkflowContext
 
 logging.basicConfig(level=logging.DEBUG)
 

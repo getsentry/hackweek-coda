@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC
 
 
 class Signal:

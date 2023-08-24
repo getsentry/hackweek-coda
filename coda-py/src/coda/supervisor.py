@@ -1,15 +1,14 @@
 import asyncio
+import logging
 import os
 import struct
 from abc import ABC, abstractmethod
 
-import cbor2
 import aiofiles
+import cbor2
 
 from coda.interest import Signal
 from coda.utils import generate_uuid
-
-import logging
 
 
 def _default_message_condition(_type, request_id, **kwargs):

@@ -3,7 +3,7 @@ import logging
 import uuid
 from enum import Enum
 
-from coda.interest import Interest, Listener
+from coda.interest import Listener
 from coda.workflow import WorkflowContext
 
 
