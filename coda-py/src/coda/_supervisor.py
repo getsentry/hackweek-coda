@@ -123,7 +123,8 @@ class CborPipeSupervisorAPI(SupervisorAPI):
         return response["result"]
 
     async def close(self):
-        pass
+        if self._pipe is not None:
+            await self._pipe.close()
 
 
 class CborTCPSupervisorAPI(SupervisorAPI):

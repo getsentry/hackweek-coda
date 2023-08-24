@@ -31,20 +31,16 @@ class NamedPipePair:
         self._out_path = out_path
         self._in = None
         self._out = None
-        self._fin = None
-        self._fout = None
         self._stream_reader = None
         self._stream_writer = None
 
     async def connect(self, timeout: float = 10.0):
+        if self._loop is None:
+            self._loop = asyncio.get_event_loop()
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self._loop is None:
-                self._loop = asyncio.get_event_loop()
-
             if self._in is None:
                 self._in = os.open(self._in_path, os.O_RDONLY | os.O_NONBLOCK | os.O_SYNC)
-
             try:
                 if self._out is None:
                     self._out = os.open(self._out_path, os.O_WRONLY | os.O_NONBLOCK)
@@ -56,16 +52,19 @@ class NamedPipePair:
 
             self._stream_reader = asyncio.StreamReader(loop=self._loop)
             reader_protocol = asyncio.StreamReaderProtocol(self._stream_reader, loop=self._loop)
-            self._fin = os.fdopen(self._in, "rb", buffering=0)
             await self._loop.connect_read_pipe(
-                lambda: reader_protocol, self._fin
-            )
+                lambda: reader_protocol, open(self._in, "rb", buffering=0))
 
             transport, protocol = await self._loop.connect_write_pipe(
-                asyncio.streams.FlowControlMixin, os.fdopen(self._out, "wb", buffering=0))
-            self._stream_writer = asyncio.StreamWriter(transport, protocol, None, self._loop)
-
+                lambda: asyncio.streams.FlowControlMixin(loop=self._loop),
+                open(self._out, "wb", buffering=0))
+            # This works around a macos bug.  If the reader stays around then
+            # the connection immediately closes
+            self._loop.remove_reader(self._out)
+            self._stream_writer = asyncio.StreamWriter(
+                transport, protocol, None, self._loop)
             return
+
         raise IOError("failed to connect")
 
     async def write(self, data) -> None:
@@ -79,18 +78,18 @@ class NamedPipePair:
             raise ValueError("not connected")
         try:
             data = await self._stream_reader.readexactly(len)
-            if not data:
-                return b""
-            return data
+            if data:
+                return data
         except (asyncio.IncompleteReadError, asyncio.CancelledError):
-            return b""
+            pass
+        return b""
 
     async def close(self):
-        if self._fin is None:
-            return
         try:
-            self._fin.close()
-            self._fout.close()
+            if self._in is not None:
+                os.close(self._in)
+            if self._out is not None:
+                os.close(self._out)
         except OSError:
             pass
         await asyncio.sleep(0.0)
