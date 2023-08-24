@@ -6,6 +6,7 @@ from .tasks import normalize_event, symbolicate_event, store_event
 def needs_symbolication(event_data):
     return False
 
+
 @coda.workflow()
 async def process_event(project_id, event_data):
     event_data = await coda.context.spawn_task(
