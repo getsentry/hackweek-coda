@@ -34,6 +34,8 @@ class WorkflowContext(Context):
         # The dispatch will accept a coroutine, which is fine in principle but only iff they will be guaranteed
         # to be executed on the same event loop.
         self._dispatch = dispatch
+        # The supervisor is passed just to have the coroutine generation here but for the future it should be refactored
+        # to just have a data schema for dispatching requests.
         self._supervisor = supervisor
         self._workflow_name = workflow_name
         self._workflow_run_id = workflow_run_id

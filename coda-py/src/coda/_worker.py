@@ -26,6 +26,7 @@ class Worker(Listener):
 
     def __init__(self, supervisor, tasks, workflows):
         super().__init__(supervisor)
+        # Configures the supported tasks and workflows.
         self._supported_tasks = {
             t.__coda_task__.task_name: t.__coda_task__
             for t in tasks
@@ -35,8 +36,11 @@ class Worker(Listener):
             for w in workflows
         }
 
-        # Contains the messages that need to go out.
-        self._outgoing_requests = asyncio.Queue(maxsize=20)
+        # Contains the coroutines that will execute requests.
+        self._outgoing_requests = asyncio.Queue(maxsize=100)
+        # Contains all the queued tasks and workflows scheduled for execution.
+        self._queued_tasks = asyncio.Queue(maxsize=100)
+
         # Signals the main loop that the worker needs to shut down.
         self._shutdown_event = asyncio.Event()
 
@@ -56,12 +60,13 @@ class Worker(Listener):
         async with asyncio.TaskGroup() as tg:
             tg.create_task(self._process_outgoing_messages(), name="ProcessOutgoingMessages")
             tg.create_task(self._process_incoming_messages(), name="ProcessIncomingMessages")
+            tg.create_task(self._process_queued_tasks(), name="ProcessQueuedTasks")
 
         # We make sure that the worker was told to be shutdown.
         await self._shutdown_event.wait()
         # We close the connection to the supervisor.
         self.supervisor.close()
-        logging.debug(f"Worker shutdown")
+        logging.debug("Worker shutdown")
 
     def _shutdown_worker(self):
         return self._shutdown_event.set()
@@ -76,11 +81,20 @@ class Worker(Listener):
             # The queue will contain coroutines for fetching remote tasks.
             await request_coro
 
+    async def _process_queued_tasks(self):
+        tasks = []
+
+        while not self._is_shutdown():
+            ty, args = await self._queued_tasks.get()
+            if ty == "workflow":
+                tasks.append(asyncio.create_task(self._execute_workflow(args)))
+            elif ty == "task":
+                tasks.append(asyncio.create_task(self._execute_task(args)))
+
     async def _process_incoming_messages(self):
-        async with asyncio.TaskGroup() as tg:
-            while not self._is_shutdown():
-                message = await self.supervisor.consume_next_message()
-                tg.create_task(self._process_message(message), name=_name_from_message(message))
+        while not self._is_shutdown():
+            message = await self.supervisor.consume_next_message()
+            await self._process_message(message)
 
     async def _process_message(self, message):
         logging.debug(f"Received message {message}")
@@ -106,9 +120,11 @@ class Worker(Listener):
         args = message["args"]
 
         if cmd == "execute_workflow":
-            return await self._execute_workflow(args)
+            # TODO: can deadlock
+            await self._queued_tasks.put(("workflow", args))
         elif cmd == "execute_task":
-            return await self._execute_task(args)
+            # TODO: can deadlock
+            await self._queued_tasks.put(("task", args))
         elif cmd == "request_worker_shutdown":
             return MessageHandlingResult.STOP
         else:
@@ -128,14 +144,12 @@ class Worker(Listener):
             self._outgoing_requests.put_nowait(coro)
 
         # We register a workflow context, which will encapsulate the logic to drive a workflow.
-        workflow_context = WorkflowContext(dispatch, workflow_name, workflow_run_id)
+        workflow_context = WorkflowContext(dispatch, self.supervisor, workflow_name, workflow_run_id)
         with workflow_context:
             # We fetch the params and run the workflow.
             workflow_params = await self.supervisor.get_params(workflow_run_id, params_id)
             logging.debug(f"Executing workflow {workflow_name} with params {workflow_params}")
             await found_workflow(**workflow_params)
-
-        return MessageHandlingResult.SUCCESS
 
     async def _execute_task(self, args):
         task_name = args["task_name"]
@@ -153,12 +167,10 @@ class Worker(Listener):
 
         # We fetch the params and run the task.
         task_params = await self.supervisor.get_params(workflow_run_id, params_id)
-        logging.debug(f"Executing task {task_name}")
+        logging.debug(f"Executing task {task_name} with params {task_params}")
         result = await found_task(**task_params)
         logging.debug(f"Task {task_name} finished with result {result}")
 
         if persist_result:
             logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")
             await self.supervisor.publish_task_result(task_key, workflow_run_id, result)
-
-        return MessageHandlingResult.SUCCESS
