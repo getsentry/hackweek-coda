@@ -20,10 +20,13 @@ class WorkflowContext:
         self.workflow_name = workflow_name
         self.workflow_run_id = workflow_run_id
 
-    async def spawn_task(self, task_function, persistence_key, params):
+    async def spawn_task(self, task_function, persistence_keys=None, **params):
+        if persistence_keys is None:
+            persistence_keys = params.keys()
+
         task_name = task_function.__task_name__
         task_key = hash_cache_key(
-            [self.workflow_run_id, task_name] + list(persistence_key)
+            [self.workflow_run_id, task_name] + list(persistence_keys)
         )
 
         logging.debug(f"Spawning task {task_name} in workflow {self.workflow_name}")
