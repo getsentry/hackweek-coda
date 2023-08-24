@@ -17,17 +17,7 @@ async def run():
         tasks=[sum_two_numbers, divide_by],
         workflows=[my_workflow]
     )
-
-    async def run_my_workflow():
-        await asyncio.sleep(1.0)
-        context = WorkflowContext(supervisor)
-        await context.spawn_workflow(my_workflow, {"x": 10})
-
-    async def delayed_run():
-        await worker.run()
-
-    async with asyncio.TaskGroup() as tg:
-        tg.create_task(delayed_run())
+    await worker.run()
 
 
 if __name__ == '__main__':
