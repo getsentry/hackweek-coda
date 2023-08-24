@@ -2,7 +2,7 @@ import asyncio
 import logging
 from enum import Enum
 
-from coda._actor import NonBlockingTxMessagesActor, JobExecutionActor
+from coda._actor import NonBlockingTxMessagesActor, JobExecutionActor, QueueChannel
 from coda._interest import UpstreamListener
 
 EXECUTE_CMD_TO_JOB_TYPE = {
@@ -35,12 +35,12 @@ class Worker(UpstreamListener):
         self._shutdown_signal = asyncio.Event()
         # Actor responsible for forwarding non-blocking responseless messages.
         self._non_blocking_tx_messages_actor = NonBlockingTxMessagesActor(
-            queue_size=100,
+            channel=QueueChannel(size=100),
             stop_signal=self._shutdown_signal
         )
         # Actor responsible for handling the execution of jobs.
         self._job_execution_actor = JobExecutionActor(
-            queue_size=100,
+            channel=QueueChannel(size=100),
             stop_signal=self._shutdown_signal,
             supervisor=self.supervisor,
             supported_tasks=self._supported_tasks,
@@ -66,6 +66,7 @@ class Worker(UpstreamListener):
         )
 
     async def _main_loop(self):
+        # We will wait for all the tasks in the group to finish (e.g., when the shutdown event is generated).
         async with asyncio.TaskGroup() as tg:
             # We start the coroutine for handling the consumed message.
             tg.create_task(self._process_consumed_message(), name="ProcessConsumedMessages")
@@ -77,7 +78,7 @@ class Worker(UpstreamListener):
         # We make sure that the worker was told to be shutdown.
         await self._shutdown_signal.wait()
         # We close the connection to the supervisor.
-        self.supervisor.close()
+        await self.supervisor.close()
         logging.debug("Worker shutdown")
 
     async def _process_consumed_message(self):

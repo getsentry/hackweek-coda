@@ -6,26 +6,62 @@ from abc import ABC, abstractmethod
 from coda._workflow import WorkflowContext
 
 
-class Actor(ABC):
+class ActorRxChannel(ABC):
 
-    def __init__(self, queue_size, stop_signal):
-        self._queue = asyncio.Queue(maxsize=queue_size or 0)
+    @abstractmethod
+    async def get(self):
+        pass
+
+
+class ActorTxChannel(ABC):
+
+    @abstractmethod
+    async def put(self, item):
+        pass
+
+    @abstractmethod
+    def put_nowait(self, item):
+        pass
+
+
+class QueueChannel(ActorRxChannel, ActorTxChannel):
+
+    def __init__(self, size):
+        self._queue = asyncio.Queue(maxsize=size or 0)
+
+    async def get(self):
+        return await self._queue.get()
+
+    async def put(self, item):
+        await self._queue.put(item)
+
+    def put_nowait(self, item):
+        self._queue.put_nowait(item)
+
+
+class SupervisorChannel(ActorRxChannel):
+
+    def __init__(self, supervisor):
+        self._supervisor = supervisor
+
+    async def get(self):
+        await self._supervisor.consume_next_message()
+
+
+class RxActor(ABC):
+
+    def __init__(self, rx_channel, stop_signal):
+        self._rx_channel = rx_channel
         self._stop_signal = stop_signal or asyncio.Event()
 
     async def start(self):
         logging.debug(f"Actor {type(self).__name__} is waiting for incoming messages")
         while not self._stop_signal.is_set():
-            item = await self._queue.get()
+            item = await self._rx_channel.get()
             await self.on_item_received(item)
 
     def stop(self):
         self._stop_signal.set()
-
-    async def send(self, item):
-        await self._queue.put(item)
-
-    def send_nowait(self, item):
-        self._queue.put_nowait(item)
 
     @abstractmethod
     async def on_item_received(self, item):
@@ -36,10 +72,23 @@ class Actor(ABC):
         pass
 
 
-class NonBlockingTxMessagesActor(Actor):
+class TxActor(RxActor):
 
-    def __init__(self, queue_size, stop_signal):
-        super().__init__(queue_size, stop_signal)
+    def __init__(self, rx_channel, stop_signal, tx_channel):
+        super().__init__(rx_channel, stop_signal)
+        self._tx_channel = tx_channel
+
+    async def send(self, item):
+        await self._tx_channel.put(item)
+
+    def send_nowait(self, item):
+        self._tx_channel.put_nowait(item)
+
+
+class NonBlockingTxMessagesActor(TxActor):
+
+    def __init__(self, channel, stop_signal):
+        super().__init__(channel, stop_signal, channel)
 
     async def on_item_received(self, item):
         logging.debug("Sending non blocking responseless message")
@@ -51,11 +100,11 @@ class NonBlockingTxMessagesActor(Actor):
         pass
 
 
-class JobExecutionActor(Actor):
+class JobExecutionActor(TxActor):
 
-    def __init__(self, queue_size, stop_signal, supervisor, supported_workflows, supported_tasks,
+    def __init__(self, channel, stop_signal, supervisor, supported_workflows, supported_tasks,
                  non_blocking_tx_messages_actor):
-        super().__init__(queue_size, stop_signal)
+        super().__init__(channel, stop_signal, channel)
         self._supervisor = supervisor
         self._supported_workflows = supported_workflows
         self._supported_tasks = supported_tasks
