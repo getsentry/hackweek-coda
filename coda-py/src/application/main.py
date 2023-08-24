@@ -28,7 +28,6 @@ async def run():
 
     async with asyncio.TaskGroup() as tg:
         tg.create_task(delayed_run())
-        # tg.create_task(run_my_workflow())
 
 
 if __name__ == '__main__':
