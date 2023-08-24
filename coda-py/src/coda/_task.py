@@ -1,16 +1,27 @@
 import logging
+from weakref import ref as weakref
 
 
-def coda_task(task_name=None):
+def task(task_name=None):
     def decorator(func):
-        if task_name is None:
-            func.__task_name__ = func.__qualname__
-        else:
-            func.__task_name__ = task_name
+        task = Task(
+            task_name=task_name or func.__qualname__,
+            func=func
+        )
+        func.__coda_task__ = task
 
         return func
 
     return decorator
+
+
+class Task:
+    def __init__(self, name, func):
+        self.task_name = name
+        self._func = weakref(func)
+
+    def __call__(self, *args, **kwargs):
+        return self._func()(*args, **kwargs)
 
 
 class TaskHandle:

@@ -1,11 +1,9 @@
 import uuid
 
+import coda
 import pytest
 
-from coda.supervisor import SupervisorAPI, SupervisorRequest, _default_message_condition, Supervisor
-from coda.task import coda_task
-from coda.worker import Worker
-from coda.workflow import coda_workflow
+from coda._supervisor import SupervisorAPI, SupervisorRequest, _default_message_condition
 
 
 class MockServer:
@@ -174,12 +172,12 @@ class MockSupervisorAPI(SupervisorAPI):
         return response["result"]
 
 
-@coda_task(task_name="sum_two_numbers")
+@coda.task(task_name="sum_two_numbers")
 async def sum_two_numbers(a, b):
     return a + b
 
 
-@coda_workflow(workflow_name="MathWorkflow")
+@coda.workflow(workflow_name="MathWorkflow")
 async def math_workflow(context, x):
     a = x * 10
     b = x * 100

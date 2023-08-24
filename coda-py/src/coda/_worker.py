@@ -3,8 +3,8 @@ import logging
 import uuid
 from enum import Enum
 
-from coda.interest import Listener
-from coda.workflow import WorkflowContext
+from coda._interest import Listener
+from coda._workflow import WorkflowContext
 
 
 def _name_from_message(message):
@@ -26,8 +26,14 @@ class Worker(Listener):
 
     def __init__(self, supervisor, tasks, workflows):
         super().__init__(supervisor)
-        self._supported_tasks = {task.__task_name__: task for task in tasks}
-        self._supported_workflows = {workflow.__workflow_name__: workflow for workflow in workflows}
+        self._supported_tasks = {
+            t.__coda_task__.task_name: t.__coda_task__
+            for t in tasks
+        }
+        self._supported_workflows = {
+            w.__coda_workflow__.workflow_name: w.__coda_workflow__
+            for w in workflows
+        }
 
         # Signal used to stop the execution of the main loop from another coroutine.
         self._stop_signal = asyncio.Queue(maxsize=1)

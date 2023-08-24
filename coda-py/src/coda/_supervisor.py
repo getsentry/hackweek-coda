@@ -7,8 +7,8 @@ from abc import ABC, abstractmethod
 import aiofiles
 import cbor2
 
-from coda.interest import Signal
-from coda.utils import generate_uuid
+from coda._interest import Signal
+from coda._utils import generate_uuid
 
 
 def _default_message_condition(_type, request_id, **kwargs):

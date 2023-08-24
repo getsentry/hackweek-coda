@@ -1,20 +1,31 @@
 import logging
+from weakref import ref as weakref
 
-from coda.context import Context, current_context
-from coda.task import TaskHandle
-from coda.utils import generate_uuid, hash_cache_key
+from coda._context import Context
+from coda._task import TaskHandle
+from coda._utils import generate_uuid, hash_cache_key
 
 
-def coda_workflow(workflow_name=None):
+def workflow(workflow_name=None):
     def decorator(func):
-        if workflow_name is None:
-            func.__workflow_name__ = func.__qualname__
-        else:
-            func.__workflow_name__ = workflow_name
+        workflow = Workflow(
+            workflow_name=workflow_name or func.__qualname__,
+            func=func
+        )
+        func.__coda_workflow__ = workflow
 
         return func
 
     return decorator
+
+
+class Workflow:
+    def __init__(self, name, func):
+        self.workflow_name = name
+        self._func = weakref(func)
+
+    def __call__(self, *args, **kwargs):
+        return self._func()(*args, **kwargs)
 
 
 class WorkflowContext(Context):
