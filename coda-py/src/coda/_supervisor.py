@@ -4,11 +4,10 @@ import os
 import struct
 from abc import ABC, abstractmethod
 
-import aiofiles
 import cbor2
 
 from coda._interest import Signal
-from coda._utils import generate_uuid
+from coda._utils import generate_uuid, NamedPipePair
 
 
 def _default_message_condition(_type, request_id, **kwargs):
@@ -61,31 +60,28 @@ class SupervisorAPI(ABC):
 class CborPipeSupervisorAPI(SupervisorAPI):
 
     def __init__(self):
-        self.rx = None
-        self.tx = None
+        self._pipe = None
 
-    async def _open_rx(self):
-        if self.rx is None:
-            self.rx = await aiofiles.open(os.environ.get("CODA_WORKER_READ_PATH", ""), "rb")
+    async def _open_pipe(self):
+        if self._pipe is not None:
+            return self._pipe
 
-        return self.rx
-
-    async def _open_tx(self):
-        if self.tx is None:
-            self.tx = await aiofiles.open(os.environ.get("CODA_WORKER_WRITE_PATH", ""), "wb")
-
-        return self.tx
+        self._pipe = NamedPipePair(
+            os.environ["CODA_WORKER_READ_PATH"],
+            os.environ["CODA_WORKER_WRITE_PATH"],
+        )
+        await self._pipe.connect()
+        return self._pipe
 
     async def _write_to_pipe(self, data):
         logging.debug(f"Writing {data} to the write pipe")
         msg = cbor2.dumps(data)
 
-        tx = await self._open_tx()
+        tx = await self._open_pipe()
         await tx.write(struct.pack('!i', len(msg)) + msg)
-        await tx.flush()
 
     async def _read_from_pipe(self):
-        rx = await self._open_rx()
+        rx = await self._open_pipe()
         msg = await rx.read(4)
         if not msg:
             return None
@@ -127,7 +123,8 @@ class CborPipeSupervisorAPI(SupervisorAPI):
         return response["result"]
 
     async def close(self):
-        pass
+        if self._pipe is not None:
+            await self._pipe.close()
 
 
 class CborTCPSupervisorAPI(SupervisorAPI):
