@@ -30,10 +30,10 @@ class Workflow:
 
 class WorkflowContext(Context):
 
-    def __init__(self, dispatch, supervisor, workflow_name=None, workflow_run_id=None):
+    def __init__(self, supervisor_dispatch, supervisor, workflow_name=None, workflow_run_id=None):
         # The dispatch will accept a coroutine, which is fine in principle but only iff they will be guaranteed
         # to be executed on the same event loop.
-        self._dispatch = dispatch
+        self._supervisor_dispatch = supervisor_dispatch
         # The supervisor is passed just to have the coroutine generation here but for the future it should be refactored
         # to just have a data schema for dispatching requests.
         self._supervisor = supervisor
@@ -55,7 +55,7 @@ class WorkflowContext(Context):
             params_id=params_id,
             params=args
         )
-        self._dispatch(store_params)
+        self._supervisor_dispatch(store_params)
 
         # We spawn the task but in reality the server will see if it already has the task result for the given
         # task key.
@@ -68,7 +68,7 @@ class WorkflowContext(Context):
             workflow_run_id=self._workflow_run_id,
             persist_result=cache_key is not None
         )
-        self._dispatch(spawn_task)
+        self._supervisor_dispatch(spawn_task)
 
         # The TaskHandle will be used as a future object that we can await.
         return TaskHandle(
@@ -92,7 +92,7 @@ class WorkflowContext(Context):
             params_id=params_id,
             params=args
         )
-        self._dispatch(store_params)
+        self._supervisor_dispatch(store_params)
 
         # We spawn the workflow.
         spawn_workflow = self._supervisor.spawn_workflow(
@@ -100,4 +100,4 @@ class WorkflowContext(Context):
             workflow_run_id=workflow_run_id,
             params_id=params_id
         )
-        self._dispatch(spawn_workflow)
+        self._supervisor_dispatch(spawn_workflow)

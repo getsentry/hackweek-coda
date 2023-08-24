@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from abc import ABC
 
 
 class Signal:
@@ -28,11 +27,12 @@ class Interest:
         await self._signal.send_signal(value)
 
 
-class Listener(ABC):
+class UpstreamListener:
 
     def __init__(self, supervisor):
         self.supervisor = supervisor
         self.supervisor.attach_listener(self)
+
         self._interests = []
 
     async def _check_possible_interests(self, message):
@@ -53,7 +53,7 @@ class Listener(ABC):
 
         await matching_interest.satisfy(message)
 
-        logging.debug("Satisfied interest")
+        logging.debug("Deleting satisfied interest")
         del self._interests[matching_index]
 
         return True

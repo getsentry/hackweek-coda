@@ -1,10 +1,11 @@
-from coda._interest import Listener
-from coda._supervisor import Supervisor
-from coda._workflow import WorkflowContext
 import asyncio
 
+from coda._interest import UpstreamListener
+from coda._supervisor import Supervisor
+from coda._workflow import WorkflowContext
 
-class Client(Listener):
+
+class Client(UpstreamListener):
 
     def __init__(self, url):
         super().__init__(Supervisor.default(url=url))

@@ -1,18 +1,14 @@
 import asyncio
 import logging
-import uuid
 from enum import Enum
 
-from coda._interest import Listener
-from coda._workflow import WorkflowContext
+from coda._actor import NonBlockingTxMessagesActor, JobExecutionActor
+from coda._interest import UpstreamListener
 
-
-def _name_from_message(message):
-    suffix = "none"
-    if message is not None:
-        suffix = message.get("cmd", suffix)
-
-    return f"ProcessMessage-{suffix}"
+EXECUTE_CMD_TO_JOB_TYPE = {
+    "execute_workflow": "workflow",
+    "execute_task": "task"
+}
 
 
 class MessageHandlingResult(Enum):
@@ -22,7 +18,7 @@ class MessageHandlingResult(Enum):
     NOT_SUPPORTED = 3
 
 
-class Worker(Listener):
+class Worker(UpstreamListener):
 
     def __init__(self, supervisor, tasks, workflows):
         super().__init__(supervisor)
@@ -35,20 +31,34 @@ class Worker(Listener):
             w.__coda_workflow__.workflow_name: w.__coda_workflow__
             for w in workflows
         }
-
-        # Contains the coroutines that will execute requests.
-        self._outgoing_requests = asyncio.Queue(maxsize=100)
-        # Contains all the queued tasks and workflows scheduled for execution.
-        self._queued_tasks = asyncio.Queue(maxsize=100)
-
         # Signals the main loop that the worker needs to shut down.
-        self._shutdown_event = asyncio.Event()
+        self._shutdown_signal = asyncio.Event()
+        # Actor responsible for forwarding non-blocking responseless messages.
+        self._non_blocking_tx_messages_actor = NonBlockingTxMessagesActor(
+            queue_size=100,
+            stop_signal=self._shutdown_signal
+        )
+        # Actor responsible for handling the execution of jobs.
+        self._job_execution_actor = JobExecutionActor(
+            queue_size=100,
+            stop_signal=self._shutdown_signal,
+            supervisor=self.supervisor,
+            supported_tasks=self._supported_tasks,
+            supported_workflows=self._supported_workflows,
+            non_blocking_tx_messages_actor=self._non_blocking_tx_messages_actor
+        )
 
     async def run(self):
-        await self._register()
+        await self._handshake()
         await self._main_loop()
 
-    async def _register(self):
+    def _shutdown_worker(self):
+        return self._shutdown_signal.set()
+
+    def _is_shutdown(self):
+        return self._shutdown_signal.is_set()
+
+    async def _handshake(self):
         logging.debug(f"Registering {len(self._supported_tasks)} tasks and {len(self._supported_workflows)} workflows")
         await self.supervisor.register_worker(
             tasks=list(self._supported_tasks.keys()),
@@ -56,42 +66,21 @@ class Worker(Listener):
         )
 
     async def _main_loop(self):
-        # We want to wait for all signals.
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(self._process_outgoing_messages(), name="ProcessOutgoingMessages")
-            tg.create_task(self._process_incoming_messages(), name="ProcessIncomingMessages")
-            tg.create_task(self._process_queued_tasks(), name="ProcessQueuedTasks")
+            # We start the coroutine for handling the consumed message.
+            tg.create_task(self._process_consumed_message(), name="ProcessConsumedMessages")
+            # We start the actors responsible for handling a subset of the worker's capabilities.
+            tg.create_task(self._job_execution_actor.start(), name="JobExecutionActor")
+            tg.create_task(self._non_blocking_tx_messages_actor.start(), name="NonBlockingTxMessagesActor")
 
+        logging.debug("Worker shutting down")
         # We make sure that the worker was told to be shutdown.
-        await self._shutdown_event.wait()
+        await self._shutdown_signal.wait()
         # We close the connection to the supervisor.
         self.supervisor.close()
         logging.debug("Worker shutdown")
 
-    def _shutdown_worker(self):
-        return self._shutdown_event.set()
-
-    def _is_shutdown(self):
-        return self._shutdown_event.is_set()
-
-    async def _process_outgoing_messages(self):
-        while not self._is_shutdown():
-            request_coro = await self._outgoing_requests.get()
-            logging.debug("Dispatching outgoing message")
-            # The queue will contain coroutines for fetching remote tasks.
-            await request_coro
-
-    async def _process_queued_tasks(self):
-        tasks = []
-
-        while not self._is_shutdown():
-            ty, args = await self._queued_tasks.get()
-            if ty == "workflow":
-                tasks.append(asyncio.create_task(self._execute_workflow(args)))
-            elif ty == "task":
-                tasks.append(asyncio.create_task(self._execute_task(args)))
-
-    async def _process_incoming_messages(self):
+    async def _process_consumed_message(self):
         while not self._is_shutdown():
             message = await self.supervisor.consume_next_message()
             await self._process_message(message)
@@ -103,74 +92,27 @@ class Worker(Listener):
             return
 
         handling_result = await self._handle_message(message)
-
-        # If the worker is told to stop, we immediately break out of the loop.
         if handling_result == MessageHandlingResult.STOP:
             self._shutdown_worker()
         elif handling_result == MessageHandlingResult.NOT_SUPPORTED:
             logging.warning(f"Message {message} is not supported")
         elif handling_result == MessageHandlingResult.ERROR:
-            raise RuntimeError(f"An error occurred while handling the message {message}")
+            raise Exception(f"An error occurred while handling the message {message}")
 
     async def _handle_message(self, message):
+        # We first check if there are active interests in this message.
         if await self._check_possible_interests(message):
             return MessageHandlingResult.SUCCESS
 
+        # If there are no active interests, we will try to see if we can execute the message.
         cmd = message["cmd"]
         args = message["args"]
-
-        if cmd == "execute_workflow":
-            # TODO: can deadlock
-            await self._queued_tasks.put(("workflow", args))
-        elif cmd == "execute_task":
-            # TODO: can deadlock
-            await self._queued_tasks.put(("task", args))
+        if (job_type := EXECUTE_CMD_TO_JOB_TYPE.get(cmd)) is not None:
+            # TODO: can deadlock if the queue is full, since this coroutine will stall and no messages will
+            #   be consumed which are required by another coroutine to continue.
+            await self._job_execution_actor.send((job_type, args))
+            return MessageHandlingResult.SUCCESS
         elif cmd == "request_worker_shutdown":
             return MessageHandlingResult.STOP
-        else:
-            return MessageHandlingResult.NOT_SUPPORTED
 
-    async def _execute_workflow(self, args):
-        workflow_name = args["workflow_name"]
-        workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
-        params_id = uuid.UUID(bytes=args["params_id"])
-
-        found_workflow = self._supported_workflows.get(workflow_name)
-        if found_workflow is None:
-            logging.warning(f"Workflow {workflow_name} is not supported in this worker")
-            return
-
-        def dispatch(coro):
-            self._outgoing_requests.put_nowait(coro)
-
-        # We register a workflow context, which will encapsulate the logic to drive a workflow.
-        workflow_context = WorkflowContext(dispatch, self.supervisor, workflow_name, workflow_run_id)
-        with workflow_context:
-            # We fetch the params and run the workflow.
-            workflow_params = await self.supervisor.get_params(workflow_run_id, params_id)
-            logging.debug(f"Executing workflow {workflow_name} with params {workflow_params}")
-            await found_workflow(**workflow_params)
-
-    async def _execute_task(self, args):
-        task_name = args["task_name"]
-        # TODO: check how we can use task id.
-        task_id = args["task_id"]
-        task_key = args["task_key"]
-        params_id = uuid.UUID(bytes=args["params_id"])
-        workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
-        persist_result = args["persist_result"]
-
-        found_task = self._supported_tasks.get(task_name)
-        if found_task is None:
-            logging.warning(f"Task {task_name} is not supported in this worker")
-            return
-
-        # We fetch the params and run the task.
-        task_params = await self.supervisor.get_params(workflow_run_id, params_id)
-        logging.debug(f"Executing task {task_name} with params {task_params}")
-        result = await found_task(**task_params)
-        logging.debug(f"Task {task_name} finished with result {result}")
-
-        if persist_result:
-            logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")
-            await self.supervisor.publish_task_result(task_key, workflow_run_id, result)
+        return MessageHandlingResult.NOT_SUPPORTED
