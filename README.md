@@ -4,3 +4,10 @@
 </div>
 
 Celery just less terrible.
+
+## Todo
+
+* [ ] Implement workflow retries
+* [ ] Add a way to spawn a workflow from outside a supervisor via TCP socket (`coda.Client().spawn_workflow()`)
+* [ ] Delete state of ended workflows and their tasks
+* [ ] Add TTLing of workflows
