@@ -202,6 +202,10 @@ impl Controller {
                 // and even when the worker is busy.
                 match item {
                     DequeuedItem::Task(task) => {
+                        if !self.storage.workflow_is_live(task.workflow_run_id) {
+                            event!(Level::INFO, "Dropping task for dead workflow '{}'", task.workflow_run_id);
+                            return Ok(());
+                        }
                         for worker in self.workers.iter() {
                             if worker.state.tasks.contains(&task.task_name) {
                                 self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Req {
