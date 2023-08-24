@@ -9,9 +9,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 async def run():
-    supervisor = coda.Supervisor.default()
     worker = coda.Worker(
-        supervisor=supervisor,
         tasks=[normalize_event, symbolicate_event, store_event],
         workflows=[process_event]
     )

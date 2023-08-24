@@ -204,16 +204,14 @@ class CborTCPSupervisorAPI(SupervisorAPI):
 
 class Supervisor:
 
-    def __init__(self, api=None):
+    def __init__(self, api=None, url=None):
+        if api is None:
+            if url is None:
+                api = CborPipeSupervisorAPI()
+            else:
+                api = CborTCPSupervisorAPI(url)
         self._api = api
         self._listener = None
-
-    @classmethod
-    def default(cls, url=None):
-        if url is None:
-            return cls(api=CborPipeSupervisorAPI())
-
-        return cls(api=CborTCPSupervisorAPI(url))
 
     async def _make_request_and_wait(self, cmd, args):
         request = await self._api.make_request(cmd, args, True)

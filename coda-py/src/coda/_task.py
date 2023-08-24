@@ -1,11 +1,13 @@
 import logging
 from weakref import ref as weakref
 
+from coda._utils import get_object_name
+
 
 def task(task_name=None):
     def decorator(func):
         task = Task(
-            task_name=task_name or func.__qualname__,
+            task_name=task_name or get_object_name(func),
             func=func
         )
         func.__coda_task__ = task

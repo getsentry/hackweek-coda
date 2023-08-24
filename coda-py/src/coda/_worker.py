@@ -4,6 +4,7 @@ from enum import Enum
 
 from coda._actor import NonBlockingTxMessagesActor, JobExecutionActor, QueueChannel
 from coda._interest import UpstreamListener
+from coda._supervisor import Supervisor
 
 EXECUTE_CMD_TO_JOB_TYPE = {
     "execute_workflow": "workflow",
@@ -20,7 +21,9 @@ class MessageHandlingResult(Enum):
 
 class Worker(UpstreamListener):
 
-    def __init__(self, supervisor, tasks, workflows):
+    def __init__(self, tasks, workflows, supervisor=None):
+        if supervisor is None:
+            supervisor = Supervisor()
         super().__init__(supervisor)
         # Configures the supported tasks and workflows.
         self._supported_tasks = {

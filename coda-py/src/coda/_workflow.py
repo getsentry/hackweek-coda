@@ -3,13 +3,13 @@ from weakref import ref as weakref
 
 from coda._context import Context
 from coda._task import TaskHandle
-from coda._utils import generate_uuid, hash_cache_key
+from coda._utils import generate_uuid, hash_cache_key, get_object_name
 
 
 def workflow(workflow_name=None):
     def decorator(func):
         workflow = Workflow(
-            workflow_name=workflow_name or func.__qualname__,
+            workflow_name=workflow_name or get_object_name(func),
             func=func
         )
         func.__coda_workflow__ = workflow
@@ -41,7 +41,10 @@ class WorkflowContext(Context):
         self._workflow_run_id = workflow_run_id
 
     def spawn_task(self, task_function, args, cache_key=None):
-        task_name = task_function.__coda_task__.task_name
+        if hasattr(task_function, "__coda_task__"):
+            task_name = task_function.__coda_task__.task_name
+        else:
+            task_name = task_function
         task_key = hash_cache_key(
             [self._workflow_run_id, task_name] + list(cache_key or [])
         )
@@ -80,7 +83,10 @@ class WorkflowContext(Context):
         )
 
     def spawn_workflow(self, workflow_function, args):
-        workflow_name = workflow_function.__coda_workflow__.workflow_name
+        if hasattr(workflow_function, "__coda_workflow__"):
+            workflow_name = workflow_function.__coda_workflow__.workflow_name
+        else:
+            workflow_name = workflow_function
         workflow_run_id = generate_uuid()
 
         logging.debug(f"Spawning workflow {workflow_name} in workflow {self._workflow_name}")

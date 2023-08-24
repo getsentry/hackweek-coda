@@ -43,7 +43,7 @@ pub struct RunCommand {
     #[arg(short = 'c', long)]
     config: Option<PathBuf>,
     /// The command and it's arguments to execute as worker.
-    #[arg(last = true)]
+    #[arg(last = true, required = true)]
     args: Vec<OsString>,
 }
 

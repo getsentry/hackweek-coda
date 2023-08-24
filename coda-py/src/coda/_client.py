@@ -8,7 +8,7 @@ from coda._workflow import WorkflowContext
 class Client(UpstreamListener):
 
     def __init__(self, url):
-        super().__init__(Supervisor.default(url=url))
+        super().__init__(Supervisor(url=url))
 
         # Contains the messages that need to go out but that don't have a response.
         self._outgoing_requests = asyncio.Queue(maxsize=20)

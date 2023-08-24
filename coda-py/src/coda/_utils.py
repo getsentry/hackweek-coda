@@ -19,6 +19,13 @@ def hash_cache_key(items):
     return h.hexdigest()
 
 
+def get_object_name(obj):
+    return "%s.%s" % (
+        obj.__module__,
+        obj.__qualname__
+    )
+
+
 class NamedPipePair:
 
     def __init__(
