@@ -110,6 +110,6 @@ pub struct WorkflowEnded {
 pub enum WorkflowStatus {
     Enqueued,
     InProgress,
-    Success,
     Failed,
+    Success,
 }

@@ -101,6 +101,15 @@ impl Storage {
         self.workflow_state.remove(&workflow_run_id);
     }
 
+    pub fn workflow_is_live(&self, workflow_run_id: Uuid) -> bool {
+        self.workflow_state
+            .get(&workflow_run_id)
+            .map_or(false, |x| match x.status {
+                WorkflowStatus::Enqueued | WorkflowStatus::InProgress => true,
+                _ => false,
+            })
+    }
+
     /// Stores a result.
     ///
     /// This returns the registered interests on the value and they must be notified.

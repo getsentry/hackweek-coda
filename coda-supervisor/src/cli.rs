@@ -20,6 +20,9 @@ pub struct Cli {
     /// Sets the log level
     #[arg(long, global = true, default_value = "warn")]
     log_level: LevelFilter,
+    /// Enables pretty logging
+    #[arg(long, global = true)]
+    pretty_log: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -67,7 +70,14 @@ pub async fn execute() -> Result<(), Error> {
 
     tracing_subscriber::registry()
         .with(cli.tokio_console.then(console_subscriber::spawn))
-        .with(tracing_subscriber::fmt::layer().with_filter(cli.log_level))
+        .with(cli.pretty_log.then(|| {
+            tracing_subscriber::fmt::layer()
+                .pretty()
+                .with_filter(cli.log_level)
+        }))
+        .with(
+            (!cli.pretty_log).then(|| tracing_subscriber::fmt::layer().with_filter(cli.log_level)),
+        )
         .init();
 
     match cli.command {
