@@ -21,5 +21,4 @@ class TaskHandle:
     def __await__(self):
         logging.debug(f"Waiting for task {self._task_id} in workflow {self._workflow_name}")
         result = self._supervisor.get_task_result(self._workflow_run_id, self._task_key).__await__()
-        logging.debug(f"Task {self._task_id} finished with result {result}")
         return result

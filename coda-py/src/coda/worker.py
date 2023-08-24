@@ -140,6 +140,7 @@ class Worker(Listener):
         task_params = await self.supervisor.get_params(workflow_run_id, params_id)
         logging.debug(f"Executing task {task_name}")
         result = await found_task(**task_params)
+        logging.debug(f"Task {task_name} finished with result {result}")
 
         if persist_result:
             logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")

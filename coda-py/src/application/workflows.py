@@ -14,12 +14,12 @@ async def my_workflow(context, x):
     )
     sum = await task_handle
 
-    # by = 5
-    # task_handle = await context.spawn_task(
-    #     divide_by,
-    #     [sum, by],
-    #     {"x": sum, "y": by}
-    # )
-    # division = await task_handle
+    by = 5
+    task_2 = await context.spawn_task(
+        divide_by,
+        [sum, by],
+        {"x": sum, "y": by}
+    )
+    division = await task_2
 
-    print(f"Workflow has completed with result {sum}")
+    print(f"Workflow has completed with result {division}")
