@@ -30,7 +30,9 @@ class Interest:
 
 class Listener(ABC):
 
-    def __init__(self):
+    def __init__(self, supervisor):
+        self.supervisor = supervisor
+        self.supervisor.attach_listener(self)
         self._interests = []
 
     async def _check_possible_interests(self, message):
@@ -56,6 +58,6 @@ class Listener(ABC):
 
         return True
 
-    @abstractmethod
     def listen_for(self, signal, condition):
-        pass
+        interest = Interest(signal, condition)
+        self._interests.append(interest)

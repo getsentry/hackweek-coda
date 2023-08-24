@@ -25,29 +25,22 @@ class MessageHandlingResult(Enum):
 class Worker(Listener):
 
     def __init__(self, supervisor, tasks, workflows):
-        super().__init__()
-        self.supervisor = supervisor
-
-        self.supported_tasks = {task.__task_name__: task for task in tasks}
-        self.supported_workflows = {workflow.__workflow_name__: workflow for workflow in workflows}
+        super().__init__(supervisor)
+        self._supported_tasks = {task.__task_name__: task for task in tasks}
+        self._supported_workflows = {workflow.__workflow_name__: workflow for workflow in workflows}
 
         # Signal used to stop the execution of the main loop from another coroutine.
         self._stop_signal = asyncio.Queue(maxsize=1)
 
     async def run(self):
-        self.supervisor.attach_listener(self)
         await self._register()
         await self._loop()
 
-    def listen_for(self, signal, condition):
-        interest = Interest(signal, condition)
-        self._interests.append(interest)
-
     async def _register(self):
-        logging.debug(f"Registering {len(self.supported_tasks)} tasks and {len(self.supported_workflows)} workflows")
+        logging.debug(f"Registering {len(self._supported_tasks)} tasks and {len(self._supported_workflows)} workflows")
         await self.supervisor.register_worker(
-            tasks=list(self.supported_tasks.keys()),
-            workflows=list(self.supported_workflows.keys())
+            tasks=list(self._supported_tasks.keys()),
+            workflows=list(self._supported_workflows.keys())
         )
 
     async def _loop(self):
@@ -108,7 +101,7 @@ class Worker(Listener):
         workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
         params_id = uuid.UUID(bytes=args["params_id"])
 
-        found_workflow = self.supported_workflows.get(workflow_name)
+        found_workflow = self._supported_workflows.get(workflow_name)
         if found_workflow is None:
             logging.warning(f"Workflow {workflow_name} is not supported in this worker")
             return
@@ -131,7 +124,7 @@ class Worker(Listener):
         workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
         persist_result = args["persist_result"]
 
-        found_task = self.supported_tasks.get(task_name)
+        found_task = self._supported_tasks.get(task_name)
         if found_task is None:
             logging.warning(f"Task {task_name} is not supported in this worker")
             return

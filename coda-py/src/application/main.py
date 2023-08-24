@@ -20,7 +20,7 @@ async def run():
 
     async def run_my_workflow():
         await asyncio.sleep(1.0)
-        context = WorkflowContext(supervisor, "", "")
+        context = WorkflowContext(supervisor)
         await context.spawn_workflow(my_workflow, {"x": 10})
 
     async def delayed_run():
@@ -28,7 +28,7 @@ async def run():
 
     async with asyncio.TaskGroup() as tg:
         tg.create_task(delayed_run())
-        tg.create_task(run_my_workflow())
+        # tg.create_task(run_my_workflow())
 
 
 if __name__ == '__main__':

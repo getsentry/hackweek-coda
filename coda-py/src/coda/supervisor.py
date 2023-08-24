@@ -1,3 +1,4 @@
+import asyncio
 import os
 import struct
 from abc import ABC, abstractmethod
@@ -32,7 +33,7 @@ class SupervisorRequest:
 class SupervisorAPI(ABC):
 
     @abstractmethod
-    async def make_request(self, cmd, args, has_response):
+    async def make_request(self, cmd, args, has_response=False):
         pass
 
     @abstractmethod
@@ -54,10 +55,9 @@ class SupervisorAPI(ABC):
         return self.extract_response(response)
 
 
-class CborSupervisorAPI(SupervisorAPI):
+class CborPipeSupervisorAPI(SupervisorAPI):
 
-    def __init__(self, url):
-        self.url = url
+    def __init__(self):
         self.rx = None
         self.tx = None
 
@@ -92,7 +92,8 @@ class CborSupervisorAPI(SupervisorAPI):
             return None
 
         data = cbor2.loads(bytes_vals)
-        logging.debug(f"Reading {data} from the read pipe")
+        logging.debug(f"Read {data} from the read pipe")
+
         return data
 
     async def make_request(self, cmd, args, has_response=False):
@@ -123,6 +124,69 @@ class CborSupervisorAPI(SupervisorAPI):
         return response["result"]
 
 
+class CborTCPSupervisorAPI(SupervisorAPI):
+
+    def __init__(self, url):
+        self.url = url
+        self.rx = None
+        self.tx = None
+
+    async def _open_socket(self):
+        if self.rx is None and self.tx is None:
+            split_url = self.url.split(":")
+            rx, tx = await asyncio.open_connection(
+                split_url[0], split_url[1]
+            )
+            self.rx = rx
+            self.tx = tx
+
+        return self.rx, self.tx
+
+    async def _write_to_socket(self, data):
+        logging.debug(f"Writing {data} to the write socket")
+        msg = cbor2.dumps(data)
+
+        _, tx = await self._open_socket()
+        tx.write(msg)
+        await tx.drain()
+
+    async def _read_from_socket(self):
+        rx, _ = await self._open_socket()
+
+        bytes_vals = await rx.read()
+        data = cbor2.loads(bytes_vals)
+        logging.debug(f"Read {data} from the read pipe")
+
+        return data
+
+    async def make_request(self, cmd, args, has_response=False):
+        request = {
+            "type": "req",
+            "cmd": cmd,
+            "args": args,
+        }
+
+        request_id = generate_uuid()
+        if has_response:
+            request["request_id"] = request_id.bytes
+
+        await self._write_to_socket(request)
+        return SupervisorRequest(cmd, request_id)
+
+    def build_condition_for_response(self, request):
+        return _default_message_condition(
+            _type="resp",
+            request_id=request.request_id,
+            cmd=request.cmd
+        )
+
+    async def get_next_message(self):
+        return await self._read_from_socket()
+
+    def extract_response(self, response):
+        return response["result"]
+
+
 class Supervisor:
 
     def __init__(self, api=None):
@@ -131,7 +195,10 @@ class Supervisor:
 
     @classmethod
     def default(cls, url=None):
-        return cls(api=CborSupervisorAPI(url))
+        if url is None:
+            return cls(api=CborPipeSupervisorAPI())
+
+        return cls(api=CborTCPSupervisorAPI(url))
 
     async def _make_request_and_wait(self, cmd, args):
         request = await self._api.make_request(cmd, args, True)

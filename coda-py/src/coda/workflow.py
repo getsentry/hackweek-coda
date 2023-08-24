@@ -15,7 +15,7 @@ def coda_workflow(workflow_name):
 
 class WorkflowContext:
 
-    def __init__(self, supervisor, workflow_name, workflow_run_id):
+    def __init__(self, supervisor, workflow_name=None, workflow_run_id=None):
         self.supervisor = supervisor
         self.workflow_name = workflow_name
         self.workflow_run_id = workflow_run_id
