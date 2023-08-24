@@ -127,6 +127,12 @@ impl Controller {
     async fn send_msg(&mut self, recipient: Recipient, msg: Message) -> Result<(), Error> {
         // TODO: buffer up messages and send them from a separate
         // spawn / in the event loop rather than awaiting here.
+        event!(
+            Level::DEBUG,
+            recipient = debug(recipient),
+            msg = debug(&msg),
+            "sending response"
+        );
         let mut bytes = pack_msg(msg)?;
         match recipient {
             Recipient::Worker(worker_id) => {
