@@ -37,7 +37,7 @@ class WorkflowContext(Context):
         self._workflow_run_id = workflow_run_id
 
     async def spawn_task(self, task_function, args, cache_key=None):
-        task_name = task_function.__task_name__
+        task_name = task_function.__coda_task__.task_name
         task_key = hash_cache_key(
             [self._workflow_run_id, task_name] + list(cache_key or [])
         )
@@ -76,7 +76,7 @@ class WorkflowContext(Context):
         )
 
     async def spawn_workflow(self, workflow_function, args):
-        workflow_name = workflow_function.__workflow_name__
+        workflow_name = workflow_function.__coda_workflow__.workflow_name
         workflow_run_id = generate_uuid()
 
         logging.debug(f"Spawning workflow {workflow_name} in workflow {self._workflow_name}")
