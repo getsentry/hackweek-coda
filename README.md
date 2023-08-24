@@ -54,10 +54,3 @@ nor a state management system.  All that data is handled via the supervisor.
 The supervisor's job is to talk to the actually workflow engine.  This has not been implemented
 yet.  All state is instead held in memory directly in the supervisor.  All state is stored
 with the workflow.
-
-## Todo
-
-* [ ] Implement workflow retries
-* [ ] Add a way to spawn a workflow from outside a supervisor via TCP socket (`coda.Client().spawn_workflow()`)
-* [ ] Delete state of ended workflows and their tasks
-* [ ] Add TTLing of workflows
