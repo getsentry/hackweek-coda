@@ -97,19 +97,22 @@ impl Controller {
     }
 
     /// Spawns an extra worker.
-    fn spawn_worker(&self) -> impl Future<Output = Result<Worker, Error>> {
+    fn spawn_worker(&self, worker_id: Uuid) -> impl Future<Output = Result<Worker, Error>> {
         let mut cmd = Command::new(&self.command[0]);
         cmd.args(&self.command[1..]);
         let worker_tx = self.mainloop_tx.clone();
         let dir = self.home.path().to_path_buf();
-        async move { spawn_worker(dir, cmd, worker_tx).await }
+        async move { spawn_worker(dir, worker_id, cmd, worker_tx).await }
     }
 
     /// Spawns a given number of workers.
     async fn spawn_workers(&mut self) -> Result<(), Error> {
         let mut set = JoinSet::new();
         for _ in 0..self.config.worker_count() {
-            set.spawn(self.spawn_worker());
+            let worker_id = Uuid::new_v4();
+            set.build_task()
+                .name(&format!("w-{}:spawn", worker_id))
+                .spawn(self.spawn_worker(worker_id))?;
         }
 
         while let Some(worker) = set.join_next().await {
@@ -194,6 +197,7 @@ impl Controller {
                 .map(|x| Either::Left(x.accept()))
                 .unwrap_or(Either::Right(futures::future::pending())) => {}
             item = self.storage.dequeue() => {
+                event!(Level::DEBUG, "pull {:?}", &item);
                 // XXX: this basically always gives it to the same worker
                 // and even when the worker is busy.
                 match item {
@@ -204,9 +208,10 @@ impl Controller {
                                     request_id: None,
                                     cmd: Cmd::ExecuteTask(task),
                                 })).await?;
-                                break;
+                                return Ok(());
                             }
                         }
+                        bail!("could not find worker for task '{}'", task.task_name);
                     }
                     DequeuedItem::Workflow(workflow) => {
                         for worker in self.workers.iter() {
@@ -215,9 +220,10 @@ impl Controller {
                                     request_id: None,
                                     cmd: Cmd::ExecuteWorkflow(workflow),
                                 })).await?;
-                                break;
+                                return Ok(());
                             }
                         }
+                        bail!("could not find worker for workflow '{}'", workflow.workflow_name);
                     }
                 }
             }
@@ -248,7 +254,8 @@ impl Controller {
                 println!("worker {} died (status = {:?})", cmd.worker_id, cmd.status);
                 self.workers.retain(|x| x.worker_id != cmd.worker_id);
                 if !self.shutting_down {
-                    self.workers.push(self.spawn_worker().await?);
+                    // TODO: backoff and stuff
+                    self.workers.push(self.spawn_worker(Uuid::new_v4()).await?);
                 }
             }
         }
@@ -369,10 +376,10 @@ impl Controller {
 /// Spawns a worker that sends its messages into `worker_tx`.
 async fn spawn_worker(
     dir: PathBuf,
+    worker_id: Uuid,
     mut cmd: Command,
     mainloop_tx: mpsc::Sender<(Recipient, Result<Message, Error>)>,
 ) -> Result<Worker, Error> {
-    let worker_id = Uuid::new_v4();
     let rx_path = dir.join(format!("rx-{}.pipe", worker_id));
     let tx_path = dir.join(format!("tx-{}.pipe", worker_id));
 
@@ -405,40 +412,46 @@ async fn spawn_worker(
 
     {
         let mainloop_tx = mainloop_tx.clone();
-        tokio::spawn(async move {
-            loop {
-                let msg = read_msg(&mut rx).await;
-                let failed = msg.is_err();
-                if mainloop_tx
-                    .send((Recipient::Worker(worker_id), msg))
-                    .await
-                    .is_err()
-                    || failed
-                {
-                    break;
+        tokio::task::Builder::new()
+            .name(&format!("w-{}:read", &worker_id))
+            .spawn(async move {
+                loop {
+                    println!("read for worker {}", worker_id);
+                    let msg = read_msg(&mut rx).await;
+                    println!("done reading for worker {}", worker_id);
+                    let failed = msg.is_err();
+                    if mainloop_tx
+                        .send((Recipient::Worker(worker_id), msg))
+                        .await
+                        .is_err()
+                        || failed
+                    {
+                        break;
+                    }
                 }
-            }
-        });
+            })?;
     }
 
     {
         let mainloop_tx = mainloop_tx.clone();
-        tokio::spawn(async move {
-            let status = match child.wait().await {
-                Ok(status) => status.code(),
-                Err(_) => None,
-            };
-            mainloop_tx
-                .send((
-                    Recipient::Worker(worker_id),
-                    Ok(Message::Event(Event::WorkerDied(WorkerDied {
-                        worker_id,
-                        status,
-                    }))),
-                ))
-                .await
-                .ok();
-        });
+        tokio::task::Builder::new()
+            .name(&format!("w-{}:waitpid", worker_id))
+            .spawn(async move {
+                let status = match child.wait().await {
+                    Ok(status) => status.code(),
+                    Err(_) => None,
+                };
+                mainloop_tx
+                    .send((
+                        Recipient::Worker(worker_id),
+                        Ok(Message::Event(Event::WorkerDied(WorkerDied {
+                            worker_id,
+                            status,
+                        }))),
+                    ))
+                    .await
+                    .ok();
+            })?;
     }
 
     Ok(worker)

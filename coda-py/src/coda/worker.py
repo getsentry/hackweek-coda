@@ -44,25 +44,19 @@ class Worker(Listener):
         )
 
     async def _loop(self):
-        tasks = []
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self._stop_signal.get())
 
-        while self._is_active():
-            message = await self.supervisor.consume_next_message()
-            logging.debug(f"Received next message {message}")
+            while self._is_active():
+                message = await self.supervisor.consume_next_message()
+                logging.debug(f"Received next message {message}")
 
-            new_task = asyncio.create_task(self._process_message(message), name="ProcessMessage")
-            tasks.append(new_task)
+                tg.create_task(self._process_message(message), name="ProcessMessage")
 
-            # We want to yield, in order to the task to actually run, since we are single threaded.
-            await asyncio.sleep(0.0)
-
-        logging.debug("Collecting all pending tasks before stopping")
-        for task in tasks:
-            if not task.done():
-                logging.debug(f"Task {task.get_name()} still running")
+                # We want to yield, in order to the task to actually run, since we are single threaded.
+                await asyncio.sleep(0.0)
 
         # We want to wait for all signals.
-        await asyncio.gather(self._stop_signal.get(), *tasks)
         logging.debug("Worker stopped")
 
     def _is_active(self):
