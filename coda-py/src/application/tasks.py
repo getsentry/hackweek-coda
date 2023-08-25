@@ -3,9 +3,7 @@ import time
 import coda
 
 class TaskException(Exception):
-
-    def __str__(self):
-        return "Exception occurred in a task"
+    pass
 
 
 @coda.task()
@@ -19,7 +17,7 @@ async def normalize_event(project_id, event_data, **kwargs):
 async def symbolicate_event(project_id, event_data, **kwargs):
     event_data["symbolicate_event"] = True
     if project_id == 2:
-        raise TaskException()
+        raise TaskException("symbolication failed")
     return event_data
 
 
