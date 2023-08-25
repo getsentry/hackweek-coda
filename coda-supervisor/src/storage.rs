@@ -46,6 +46,8 @@ pub enum DequeuedItem {
 struct WorkflowState {
     task_results: HashMap<Uuid, Outcome>,
     task_result_interests: HashMap<Uuid, HashSet<(Recipient, Uuid)>>,
+    // XXX: i hate it, because active tasks disappear when they are
+    // rescheduled on retry :-/
     active_tasks: HashMap<Uuid, Task>,
     status: WorkflowStatus,
 }
