@@ -14,8 +14,8 @@ Within Sentry, some async jobs exhibit workflow-like behavior, relying on multip
 These tasks mainly rely on Redis as auxiliary storage to exchange data during the execution, resulting in many
 rather complex and challenging implementations, which can differ significantly.
 
-We quite appreciate the design of [Temporal](https://temporal.io/), but unfortunately it is quite heavyweight for many of our
-operations. Coda is our attempt at building a workflow engine that mixes simplicity with some of Temporal's ideas.
+We quite appreciate the design of [Temporal](https://temporal.io/), but unfortunately it is quite complex for many of our
+use cases. Coda is our attempt at building a workflow engine that mixes simplicity with some of Temporal's ideas.
 
 # Example
 
