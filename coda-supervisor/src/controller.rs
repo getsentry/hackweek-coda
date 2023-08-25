@@ -388,6 +388,13 @@ impl Controller {
             }
             Cmd::PublishTaskResult(cmd) => {
                 let outcome = Outcome::Success(cmd.result);
+                event!(
+                    Level::DEBUG,
+                    task_id = display(cmd.task_id),
+                    task_key = display(cmd.task_key),
+                    outcome = debug(&outcome),
+                    "publish task result",
+                );
                 if let Some(interests) = self.storage.store_task_result(
                     cmd.workflow_run_id,
                     cmd.task_key,
@@ -431,12 +438,27 @@ impl Controller {
                 bail!("command cannot be sent to supervisor")
             }
             Cmd::TaskFailed(cmd) => {
-                if let Some(retry_task) =
+                if let Some(task) =
                     self.storage
                         .handle_task_failed(cmd.workflow_run_id, cmd.task_id, cmd.retryable)
                 {
-                    self.storage.enqueue_task(retry_task).await?;
+                    event!(
+                        Level::DEBUG,
+                        task_id = display(task.task_id),
+                        task_key = display(task.task_key),
+                        task_name = task.task_name,
+                        retries_remaining = task.retries_remaining,
+                        "retry task",
+                    );
+                    self.storage.enqueue_task(task).await?;
                 } else {
+                    event!(
+                        Level::DEBUG,
+                        task_id = display(cmd.task_id),
+                        task_key = display(cmd.task_key),
+                        failed = true,
+                        "publish task result",
+                    );
                     let outcome = Outcome::Failure(Value::Null);
                     if let Some(interests) = self.storage.store_task_result(
                         cmd.workflow_run_id,
