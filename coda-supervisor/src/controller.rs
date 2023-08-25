@@ -26,7 +26,7 @@ use tokio::{signal, time};
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use coda_ipc::{Cmd, Event, Message, Req, Resp, Task, WorkerDied, Workflow};
+use coda_ipc::{Cmd, Event, Message, Outcome, Req, Resp, WorkerDied};
 use valuable::Valuable;
 
 use crate::config::Config;
@@ -41,7 +41,7 @@ pub struct Controller {
     home: TempDir,
     shutting_down: bool,
     storage: Storage,
-    config: Config,
+    config: Arc<Config>,
 }
 
 struct Listener {
@@ -73,6 +73,7 @@ impl Controller {
     /// Creates a fresh controller.
     pub async fn new(cmd: &[OsString], config: Config) -> Result<Controller, Error> {
         let (mainloop_tx, mainloop_rx) = mpsc::channel(20 * config.worker_count());
+        let config = Arc::new(config);
         Ok(Controller {
             command: cmd.iter().cloned().collect(),
             workers: Vec::new(),
@@ -80,7 +81,7 @@ impl Controller {
             mainloop_rx,
             home: tempfile::tempdir()?,
             shutting_down: false,
-            storage: Storage::from_config(&config),
+            storage: Storage::from_config(config.clone()),
             listener: if let Some(addr) = config.listen_addr() {
                 Some(Listener::connect(addr, mainloop_tx).await?)
             } else {
@@ -225,8 +226,10 @@ impl Controller {
                             );
                             return Ok(());
                         }
+                        // TOOD: pick random worker
                         for worker in self.workers.iter() {
                             if worker.state.tasks.contains(&task.task_name) {
+                                self.storage.register_active_task(&task);
                                 self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Req {
                                     request_id: None,
                                     cmd: Cmd::ExecuteTask(task),
@@ -248,6 +251,7 @@ impl Controller {
                             workflow_name = workflow.workflow_name,
                             "enqueue workflow"
                         );
+                        // TOOD: pick random worker
                         for worker in self.workers.iter() {
                             if worker.state.workflows.contains(&workflow.workflow_name) {
                                 self.storage.mark_workflow_started(worker.worker_id);
@@ -311,7 +315,7 @@ impl Controller {
         &mut self,
         recipient: Recipient,
         req: Req,
-    ) -> Result<Option<Value>, Error> {
+    ) -> Result<Option<Outcome>, Error> {
         Ok(match req.cmd {
             Cmd::RegisterWorker(cmd) => {
                 let worker_id = require_worker(recipient)?;
@@ -325,26 +329,26 @@ impl Controller {
                 );
                 worker.state.tasks = cmd.tasks;
                 worker.state.workflows = cmd.workflows;
-                Some(Value::Null)
+                Some(Outcome::Success(Value::Null))
             }
             Cmd::StoreParams(cmd) => {
                 self.storage
                     .params
                     .insert((cmd.workflow_run_id, cmd.params_id), Arc::new(cmd.params));
-                Some(Value::Null)
+                Some(Outcome::Success(Value::Null))
             }
             Cmd::GetParams(cmd) => match self
                 .storage
                 .params
                 .get(&(cmd.workflow_run_id, cmd.params_id))
             {
-                Some(params) => Some(Value::Map(
+                Some(params) => Some(Outcome::Success(Value::Map(
                     params
                         .iter()
                         .map(|(k, v)| (Value::Text(k.to_string()), v.clone()))
                         .collect(),
-                )),
-                None => Some(Value::Null),
+                ))),
+                None => Some(Outcome::Success(Value::Null)),
             },
             Cmd::SpawnTask(task) => {
                 if !self
@@ -358,12 +362,11 @@ impl Controller {
                         task_name = task.task_name,
                         "enqueue task",
                     );
-                    self.enqueue_task(task).await?;
+                    self.storage.enqueue_task(task).await?;
                 }
-                Some(Value::Null)
+                Some(Outcome::Success(Value::Null))
             }
             Cmd::GetTaskResult(cmd) => {
-                let worker_id = require_worker(recipient)?;
                 if let Some(result) = self
                     .storage
                     .get_task_result(cmd.workflow_run_id, cmd.task_key)
@@ -374,12 +377,12 @@ impl Controller {
                         self.storage.notify_task_result(
                             cmd.workflow_run_id,
                             cmd.task_key,
-                            Recipient::Worker(worker_id),
+                            recipient,
                             request_id,
                         );
                         None
                     } else {
-                        Some(Value::Null)
+                        Some(Outcome::Success(Value::Null))
                     }
                 }
             }
@@ -387,6 +390,7 @@ impl Controller {
                 if let Some(interests) = self.storage.store_task_result(
                     cmd.workflow_run_id,
                     cmd.task_key,
+                    cmd.task_id,
                     cmd.result.clone(),
                 ) {
                     for (recipient, request_id) in interests.into_iter() {
@@ -400,7 +404,7 @@ impl Controller {
                         .await?;
                     }
                 }
-                Some(Value::Null)
+                Some(Outcome::Success(Value::Null))
             }
             Cmd::SpawnWorkflow(workflow) => {
                 event!(
@@ -410,16 +414,8 @@ impl Controller {
                     "enqueue and register workflow",
                 );
                 self.storage.register_workflow(workflow.workflow_run_id);
-                if let Some(ref policy) = workflow.retry_policy {
-                    self.storage
-                        .update_workflow_retry_policy(workflow.workflow_run_id, policy);
-                }
-                if let Some(ref policy) = workflow.ttl_policy {
-                    self.storage
-                        .update_workflow_ttl_policy(workflow.workflow_run_id, policy);
-                }
-                self.enqueue_workflow(workflow).await?;
-                Some(Value::Null)
+                self.storage.enqueue_workflow(workflow).await?;
+                Some(Outcome::Success(Value::Null))
             }
             Cmd::WorkflowEnded(cmd) => {
                 event!(
@@ -433,27 +429,38 @@ impl Controller {
             Cmd::ExecuteTask(_) | Cmd::ExecuteWorkflow(_) => {
                 bail!("command cannot be sent to supervisor")
             }
-            Cmd::TaskFailed(_) => {
-                bail!("task failure is not supported")
-            },
+            Cmd::TaskFailed(cmd) => {
+                if let Some(retry_task) =
+                    self.storage
+                        .handle_task_failed(cmd.workflow_run_id, cmd.task_id, cmd.retryable)
+                {
+                    self.storage.enqueue_task(retry_task).await?;
+                } else {
+                    let outcome = Outcome::Failure(Value::Null);
+                    if let Some(interests) = self.storage.store_task_result(
+                        cmd.workflow_run_id,
+                        cmd.task_key,
+                        cmd.task_id,
+                        outcome.clone(),
+                    ) {
+                        for (recipient, request_id) in interests.into_iter() {
+                            self.send_msg(
+                                recipient,
+                                Message::Resp(Resp {
+                                    request_id,
+                                    result: outcome.clone(),
+                                }),
+                            )
+                            .await?;
+                        }
+                    }
+                }
+                Some(Outcome::Success(Value::Null))
+            }
             Cmd::WorkflowFailed(_) => {
                 bail!("workflow failure is not supported")
             }
         })
-    }
-
-    async fn enqueue_task(&mut self, task: Task) -> Result<(), Error> {
-        let queue_name = self.config.queue_name_for_task_name(&task.task_name);
-        self.storage.enqueue_task(queue_name, task).await?;
-        Ok(())
-    }
-
-    async fn enqueue_workflow(&mut self, workflow: Workflow) -> Result<(), Error> {
-        let queue_name = self
-            .config
-            .queue_name_for_workflow_name(&workflow.workflow_name);
-        self.storage.enqueue_workflow(queue_name, workflow).await?;
-        Ok(())
     }
 }
 
