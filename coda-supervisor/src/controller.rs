@@ -321,7 +321,7 @@ impl Controller {
                 let worker_id = require_worker(recipient)?;
                 let worker = self.get_worker_mut(worker_id)?;
                 event!(
-                    Level::DEBUG,
+                    Level::INFO,
                     worker_id = display(worker_id),
                     tasks = cmd.tasks.as_value(),
                     workflows = cmd.workflows.as_value(),

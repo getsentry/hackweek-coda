@@ -5,7 +5,7 @@ import coda
 from application.tasks import normalize_event, symbolicate_event, store_event
 from application.workflows import process_event
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 
 
 async def run():
