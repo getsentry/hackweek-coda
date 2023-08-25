@@ -1,7 +1,8 @@
-import coda
-
-from .tasks import normalize_event, symbolicate_event, store_event
 from subprocess import call
+
+import coda
+from .tasks import normalize_event, symbolicate_event, store_event
+
 
 def needs_symbolication(event_data):
     return True
