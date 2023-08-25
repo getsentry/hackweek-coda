@@ -387,18 +387,19 @@ impl Controller {
                 }
             }
             Cmd::PublishTaskResult(cmd) => {
+                let outcome = Outcome::Success(cmd.result);
                 if let Some(interests) = self.storage.store_task_result(
                     cmd.workflow_run_id,
                     cmd.task_key,
                     cmd.task_id,
-                    cmd.result.clone(),
+                    outcome.clone(),
                 ) {
                     for (recipient, request_id) in interests.into_iter() {
                         self.send_msg(
                             recipient,
                             Message::Resp(Resp {
                                 request_id,
-                                result: cmd.result.clone(),
+                                result: outcome.clone(),
                             }),
                         )
                         .await?;

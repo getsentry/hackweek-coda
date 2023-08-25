@@ -103,7 +103,7 @@ pub struct PublishTaskResult {
     pub workflow_run_id: Uuid,
     pub task_key: Uuid,
     pub task_id: Uuid,
-    pub result: Outcome,
+    pub result: Value,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
