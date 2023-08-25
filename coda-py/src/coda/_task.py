@@ -4,13 +4,15 @@ from weakref import ref as weakref
 from coda._utils import get_object_name
 
 
-def task(task_name=None):
+def task(task_name=None, retry_on=None, max_retries=0):
     def decorator(func):
-        task = Task(
+        inner_task = Task(
             task_name=task_name or get_object_name(func),
+            retry_on=retry_on or [],
+            max_retries=max_retries or 0,
             func=func
         )
-        func.__coda_task__ = task
+        func.__coda_task__ = inner_task
 
         return func
 
@@ -18,9 +20,18 @@ def task(task_name=None):
 
 
 class Task:
-    def __init__(self, task_name, func):
+    def __init__(self, task_name, retry_on, max_retries, func):
         self.task_name = task_name
+        self._retry_on = retry_on
+        self.max_retries = max_retries
         self._func = weakref(func)
+
+    def retriable_for(self, exc):
+        for retry_on_exc in self._retry_on:
+            if isinstance(exc, retry_on_exc):
+                return True
+
+        return False
 
     def __call__(self, *args, **kwargs):
         return self._func()(*args, **kwargs)

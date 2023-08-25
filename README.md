@@ -2,20 +2,20 @@
   <img src="https://github.com/mitsuhiko/coda/blob/main/assets/logo.png?raw=true" alt="" width=320>
 </div>
 
-Meet **Coda**, a hackweek project on a mission to revolutionize queue systems and simplify complex task workflows at Sentry.
+Meet **Coda**, a hackweek project on a mission to revolutionize queue systems and simplify complex task workflows at [Sentry](https://sentry.io).
 
 # What's Coda?
 
-Coda is a hackweek project to try some alternative ideas to how queue systems can work.
-We use a lot of Celery at Sentry and while Celery is not a bad project, it's not a great
-abstraction for many of the things we want to build.
+Coda is a hackweek project aimed at exploring alternative ideas for how queue systems can function. We extensively employ
+Celery at Sentry, and although Celery is not a bad project, it does not offer an ideal abstraction for many of the
+functionalities we intend to develop.
 
-At Sentry some tasks behave a bit like workflows that depend on more than one task.  They
-use redis as auxiliary storage to pass data around while different tasks are executing.
-The end result is a pretty big mess that can be hard to understand.
+Within Sentry, some async jobs exhibit workflow-like behavior, relying on multiple tasks for their execution.
+These tasks mainly rely on Redis as auxiliary storage to exchange data during the execution, resulting in many
+rather complex and challenging implementations, which can differ significantly.
 
-We quite appreciate the design of temporal, but unfortunately it's design is quite heavyweight for many of our
-operations. Coda tries to explore of the ideas can also work in a more simplified world.
+We quite appreciate the design of [Temporal](https://temporal.io/), but unfortunately it is quite heavyweight for many of our
+operations. Coda is our attempt at building a workflow engine that mixes simplicity with some of Temporal's ideas.
 
 # Example
 
@@ -43,12 +43,12 @@ async def process_event(project_id, event_data, **kwargs):
     print(f"Workflow finished with result {result}")
 ```
 
-# Design Ideas
+# High-Level Design
 
-Coda consts of a **supervisor** which spawns workers.  For now there is only a Python client.
-The workers pass all their communication via the supervisor.  They connect neither to a queue
-nor a state management system.  All that data is handled via the supervisor.
+Coda consists of a **supervisor** responsible for spawning workers. Currently, there is only a Python client available.
+The workers relay all their communication through the supervisor, connecting to neither a queue nor a state management
+system. All data is managed by the supervisor.
 
-The supervisor's job is to talk to the actual workflow engine.  This has not been implemented
-yet.  All state is instead held in memory directly in the supervisor.  All state is stored
-with the workflow.
+The supervisor's primary responsibility is to communicate with the actual workflow engine, which has not been
+implemented yet. Consequently, all state data is stored directly in memory within the supervisor. This state is
+associated with the workflow.

@@ -8,11 +8,11 @@ from coda._utils import generate_uuid, hash_cache_key, get_object_name
 
 def workflow(workflow_name=None):
     def decorator(func):
-        workflow = Workflow(
+        inner_workflow = Workflow(
             workflow_name=workflow_name or get_object_name(func),
             func=func
         )
-        func.__coda_workflow__ = workflow
+        func.__coda_workflow__ = inner_workflow
 
         return func
 
@@ -41,13 +41,15 @@ class WorkflowContext(Context):
         self._workflow_run_id = workflow_run_id
 
     def spawn_task(self, task_function, args, cache_key=None):
+        coda_task = task_function.__coda_task__
         if hasattr(task_function, "__coda_task__"):
-            task_name = task_function.__coda_task__.task_name
+            task_name = coda_task.task_name
         else:
             task_name = task_function
         task_key = hash_cache_key(
             [self._workflow_run_id, task_name] + list(cache_key or [])
         )
+        retries_remaining = coda_task.max_retries
 
         logging.debug(f"Spawning task {task_name} in workflow {self._workflow_name}")
 
@@ -69,7 +71,8 @@ class WorkflowContext(Context):
             task_key=task_key,
             params_id=params_id,
             workflow_run_id=self._workflow_run_id,
-            persist_result=cache_key is not None
+            persist_result=cache_key is not None,
+            retries_remaining=retries_remaining
         )
         self._supervisor_dispatch(spawn_task)
 

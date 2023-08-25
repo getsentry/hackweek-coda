@@ -157,7 +157,7 @@ class JobExecutionActor(TxActor):
 
     async def _execute_task(self, args):
         task_name = args["task_name"]
-        _ = args["task_id"]
+        task_id = uuid.UUID(bytes=args["task_id"])
         task_key = uuid.UUID(bytes=args["task_key"])
         params_id = uuid.UUID(bytes=args["params_id"])
         workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
@@ -171,9 +171,19 @@ class JobExecutionActor(TxActor):
         # We fetch the params and run the task.
         task_params = await self._supervisor.get_params(workflow_run_id, params_id)
         logging.debug(f"Executing task {task_name} with params {task_params}")
-        result = await found_task(**task_params)
-        logging.debug(f"Task {task_name} finished with result {result}")
+        coda_task = found_task.__coda_task__
+        try:
+            result = await coda_task(**task_params)
+            logging.debug(f"Task {task_name} finished with result {result}")
 
-        if persist_result:
-            logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")
-            await self._supervisor.publish_task_result(task_key, workflow_run_id, result)
+            if persist_result:
+                logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")
+                await self._supervisor.publish_task_result(task_id, task_key, workflow_run_id, result)
+        except Exception as exc:
+            retriable = coda_task.retriable_for(exc)
+            if retriable:
+                logging.debug(f"Retriable exception {exc} occurred in task {task_name}")
+            else:
+                logging.debug(f"Non-retriable exception {exc} occurred in task {task_name}")
+
+            #await self._supervisor.task_failed(workflow_run_id, task_id, task_key, retriable)

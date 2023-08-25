@@ -29,4 +29,4 @@ async def process_event(project_id, event_data, **kwargs):
         cache_key=[event_data["event_id"]]
     )
 
-    call(["say", f"We are lucky, the worker finished at {result['saved_at']}"])
+    call(["say", "-vAlice", f"Siamo fortunati, il lavoratore ha finito alle {result['saved_at']}"])

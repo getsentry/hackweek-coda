@@ -27,11 +27,11 @@ class Worker(UpstreamListener):
         super().__init__(supervisor)
         # Configures the supported tasks and workflows.
         self._supported_tasks = {
-            t.__coda_task__.task_name: t.__coda_task__
+            t.__coda_task__.task_name: t
             for t in tasks
         }
         self._supported_workflows = {
-            w.__coda_workflow__.workflow_name: w.__coda_workflow__
+            w.__coda_workflow__.workflow_name: w
             for w in workflows
         }
         # Signals the main loop that the worker needs to shut down.

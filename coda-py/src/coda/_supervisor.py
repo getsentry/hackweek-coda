@@ -210,8 +210,13 @@ class Supervisor:
         if self._listener is None:
             raise Exception("A listener is required in order to wait for a response")
 
-        response = await self._api.get_response(self._listener, request)
-        return response
+        result = await self._api.get_response(self._listener, request)
+
+        kind = result["kind"]
+        if kind != "success":
+            raise Exception(f"The request {cmd} received a non-success response")
+
+        return result["value"]
 
     def attach_listener(self, listener):
         self._listener = listener
@@ -250,7 +255,7 @@ class Supervisor:
             }
         )
 
-    async def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result):
+    async def spawn_task(self, task_name, task_id, task_key, params_id, workflow_run_id, persist_result, retries_remaining):
         await self._api.make_request(
             cmd="spawn_task",
             args={
@@ -259,17 +264,30 @@ class Supervisor:
                 "task_key": task_key.bytes,
                 "params_id": params_id.bytes,
                 "workflow_run_id": workflow_run_id.bytes,
-                "persist_result": persist_result
+                "persist_result": persist_result,
+                "retries_remaining": retries_remaining
             }
         )
 
-    async def publish_task_result(self, task_key, workflow_run_id, result):
+    async def publish_task_result(self, task_id, task_key, workflow_run_id, result):
         await self._api.make_request(
             cmd="publish_task_result",
             args={
+                "task_id": task_id.bytes,
                 "task_key": task_key.bytes,
                 "workflow_run_id": workflow_run_id.bytes,
                 "result": result
+            }
+        )
+
+    async def task_failed(self, workflow_run_id, task_id, task_key, retriable):
+        await self._api.make_request(
+            cmd="task_failed",
+            args={
+                "workflow_run_id": workflow_run_id.bytes,
+                "task_id": task_id.bytes,
+                "task_key": task_key.bytes,
+                "retriable": retriable
             }
         )
 

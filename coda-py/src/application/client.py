@@ -13,7 +13,7 @@ async def run():
         "event_id": 1,
         "sdk": "javascript"
     }
-    await client.run(process_event, {"project_id": 1, "event_data": event_data})
+    await client.run(process_event, {"project_id": 2, "event_data": event_data})
 
 
 if __name__ == '__main__':
