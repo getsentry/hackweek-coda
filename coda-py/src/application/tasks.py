@@ -1,4 +1,5 @@
 import time
+import random
 
 import coda
 
@@ -13,16 +14,16 @@ async def normalize_event(project_id, event_data, **kwargs):
     return event_data
 
 
-@coda.task(retry_on=[TaskException], max_retries=5)
-async def symbolicate_event(project_id, event_data, **kwargs):
+@coda.task(retry_on=[TaskException], max_retries=10)
+async def symbolicate_event(event_data, **kwargs):
     event_data["symbolicate_event"] = True
-    if project_id == 2:
-        raise TaskException("symbolication failed")
+    if random.random() > 0.25:
+        raise TaskException("symbolication failed because flaky")
     return event_data
 
 
 @coda.task()
-async def store_event(project_id, event_data, **kwargs):
+async def store_event(event_data, **kwargs):
     event_data["store_event"] = True
     event_data["saved_at"] = time.ctime()
     return event_data
