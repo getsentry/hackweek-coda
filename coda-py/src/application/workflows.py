@@ -29,5 +29,5 @@ async def process_event(project_id, event_data, **kwargs):
     call([
         "say",
         "-vAlice",
-        f"Siamo fortunati, il lavoratore ha finito alle {result['saved_at']}"
+        f"Il lavoratore ha finito alle {result['saved_at']}"
     ])
