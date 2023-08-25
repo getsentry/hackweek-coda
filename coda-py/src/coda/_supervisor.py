@@ -256,7 +256,7 @@ class Supervisor:
             args={
                 "task_name": task_name,
                 "task_id": task_id.bytes,
-                "task_key": task_key,
+                "task_key": task_key.bytes,
                 "params_id": params_id.bytes,
                 "workflow_run_id": workflow_run_id.bytes,
                 "persist_result": persist_result
@@ -267,7 +267,7 @@ class Supervisor:
         await self._api.make_request(
             cmd="publish_task_result",
             args={
-                "task_key": task_key,
+                "task_key": task_key.bytes,
                 "workflow_run_id": workflow_run_id.bytes,
                 "result": result
             }
@@ -278,7 +278,7 @@ class Supervisor:
             cmd="get_task_result",
             args={
                 "workflow_run_id": workflow_run_id.bytes,
-                "task_key": task_key
+                "task_key": task_key.bytes
             }
         )
 

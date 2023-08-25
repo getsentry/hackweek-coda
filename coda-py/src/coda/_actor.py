@@ -158,7 +158,7 @@ class JobExecutionActor(TxActor):
     async def _execute_task(self, args):
         task_name = args["task_name"]
         _ = args["task_id"]
-        task_key = args["task_key"]
+        task_key = uuid.UUID(bytes=args["task_key"])
         params_id = uuid.UUID(bytes=args["params_id"])
         workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
         persist_result = args["persist_result"]

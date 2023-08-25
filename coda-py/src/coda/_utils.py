@@ -16,7 +16,7 @@ def hash_cache_key(items):
     for item in items:
         h.update(str(item).encode("utf-8"))
 
-    return h.hexdigest()
+    return uuid.UUID(bytes=h.digest(), version=3)
 
 
 def get_object_name(obj):
