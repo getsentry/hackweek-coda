@@ -1,7 +1,7 @@
 import coda
 
 from .tasks import normalize_event, symbolicate_event, store_event
-
+from subprocess import call
 
 def needs_symbolication(event_data):
     return True
@@ -28,4 +28,4 @@ async def process_event(project_id, event_data, **kwargs):
         cache_key=[event_data["event_id"]]
     )
 
-    print(f"Workflow finished with result {result}")
+    call(["say", f"We are lucky, the worker finished at {result['saved_at']}"])
