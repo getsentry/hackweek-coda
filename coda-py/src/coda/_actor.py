@@ -153,11 +153,12 @@ class JobExecutionActor(TxActor):
             workflow_params = await self._supervisor.get_params(workflow_run_id, params_id)
             logging.debug(f"Executing workflow {workflow_name} with params {workflow_params}")
             await found_workflow(**workflow_params)
+            logging.debug(f"Workflow {workflow_name} finished")
 
     async def _execute_task(self, args):
         task_name = args["task_name"]
         _ = args["task_id"]
-        task_key = args["task_key"]
+        task_key = uuid.UUID(bytes=args["task_key"])
         params_id = uuid.UUID(bytes=args["params_id"])
         workflow_run_id = uuid.UUID(bytes=args["workflow_run_id"])
         persist_result = args["persist_result"]

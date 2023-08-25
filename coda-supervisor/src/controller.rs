@@ -433,6 +433,12 @@ impl Controller {
             Cmd::ExecuteTask(_) | Cmd::ExecuteWorkflow(_) => {
                 bail!("command cannot be sent to supervisor")
             }
+            Cmd::TaskFailed(_) => {
+                bail!("task failure is not supported")
+            },
+            Cmd::WorkflowFailed(_) => {
+                bail!("workflow failure is not supported")
+            }
         })
     }
 

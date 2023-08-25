@@ -1,3 +1,5 @@
+import time
+
 import coda
 
 
@@ -17,4 +19,5 @@ async def symbolicate_event(project_id, event_data, **kwargs):
 @coda.task()
 async def store_event(project_id, event_data, **kwargs):
     event_data["store_event"] = True
+    event_data["saved_at"] = time.ctime()
     return event_data

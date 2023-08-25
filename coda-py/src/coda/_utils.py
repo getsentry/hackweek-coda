@@ -1,9 +1,9 @@
-import hashlib
-import uuid
-import os
 import asyncio
 import errno
+import hashlib
+import os
 import time
+import uuid
 
 
 def generate_uuid():
@@ -16,7 +16,7 @@ def hash_cache_key(items):
     for item in items:
         h.update(str(item).encode("utf-8"))
 
-    return h.hexdigest()
+    return uuid.UUID(bytes=h.digest(), version=3)
 
 
 def get_object_name(obj):
@@ -29,9 +29,9 @@ def get_object_name(obj):
 class NamedPipePair:
 
     def __init__(
-        self,
-        in_path,
-        out_path,
+            self,
+            in_path,
+            out_path,
     ) -> None:
         self._loop = None
         self._in_path = in_path

@@ -25,12 +25,14 @@ pub enum Cmd {
     RegisterWorker(RegisterWorker),
     SpawnTask(Task),
     ExecuteTask(Task),
+    TaskFailed(TaskFailed),
     StoreParams(StoreParams),
     GetParams(GetParams),
     PublishTaskResult(PublishTaskResult),
     GetTaskResult(GetTaskResult),
     SpawnWorkflow(Workflow),
     ExecuteWorkflow(Workflow),
+    WorkflowFailed(WorkflowFailed),
     WorkflowEnded(WorkflowEnded),
 }
 
@@ -95,6 +97,13 @@ pub struct PublishTaskResult {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct TaskFailed {
+    pub task_id: Uuid,
+    pub task_key: Uuid,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Workflow {
     pub workflow_name: String,
     pub workflow_run_id: Uuid,
@@ -103,6 +112,11 @@ pub struct Workflow {
     pub retry_policy: Option<RetryPolicy>,
     #[serde(default)]
     pub ttl_policy: Option<TtlPolicy>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WorkflowFailed {
+    pub workflow_run_id: Uuid,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
