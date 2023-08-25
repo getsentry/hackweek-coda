@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import uuid
+import sys
+import traceback
 from weakref import WeakSet
 from abc import ABC, abstractmethod
 
@@ -153,8 +155,12 @@ class JobExecutionActor(TxActor):
             # We fetch the params and run the workflow.
             workflow_params = await self._supervisor.get_params(workflow_run_id, params_id)
             logging.debug(f"Executing workflow {workflow_name} with params {workflow_params}")
-            await found_workflow(**workflow_params)
-            logging.debug(f"Workflow {workflow_name} finished")
+            try:
+                await found_workflow(**workflow_params)
+            except Exception:
+                logging.exception(f"Workflow {workflow_name} failed")
+            else:
+                logging.debug(f"Workflow {workflow_name} finished")
 
     async def _execute_task(self, args):
         task_name = args["task_name"]
@@ -181,10 +187,12 @@ class JobExecutionActor(TxActor):
                 logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")
                 await self._supervisor.publish_task_result(task_id, task_key, workflow_run_id, result)
         except Exception as exc:
+            exc_info = sys.exc_info()
             retryable = coda_task.retryable_for(exc)
             if retryable:
                 logging.debug(f"Retryable exception [{exc}] occurred in task {task_name}")
             else:
-                logging.debug(f"Non-retryable exception [{exc}] occurred in task {task_name}")
+                logging.error(f"Non-retryable exception [{exc}] occurred in task {task_name}")
+            traceback.print_exception(*exc_info)
 
             await self._supervisor.task_failed(workflow_run_id, task_id, task_key, retryable)
