@@ -74,7 +74,6 @@ class CborPipeSupervisorAPI(SupervisorAPI):
         return self._pipe
 
     async def _write_to_pipe(self, data):
-        logging.debug(f"Writing {data} to the write pipe")
         msg = cbor2.dumps(data)
 
         tx = await self._open_pipe()
@@ -90,10 +89,7 @@ class CborPipeSupervisorAPI(SupervisorAPI):
         if not bytes_vals:
             return None
 
-        data = cbor2.loads(bytes_vals)
-        logging.debug(f"Read {data} from the read pipe")
-
-        return data
+        return cbor2.loads(bytes_vals)
 
     async def make_request(self, cmd, args, has_response=False):
         request = {
@@ -146,7 +142,6 @@ class CborTCPSupervisorAPI(SupervisorAPI):
         return self.rx, self.tx
 
     async def _write_to_socket(self, data):
-        logging.debug(f"Writing {data} to the write socket")
         msg = cbor2.dumps(data)
 
         _, tx = await self._open_socket()
@@ -164,10 +159,7 @@ class CborTCPSupervisorAPI(SupervisorAPI):
         if not bytes_vals:
             return None
 
-        data = cbor2.loads(bytes_vals)
-        logging.debug(f"Read {data} from the read pipe")
-
-        return data
+        return cbor2.loads(bytes_vals)
 
     async def make_request(self, cmd, args, has_response=False):
         request = {
@@ -216,7 +208,7 @@ class Supervisor:
     async def _make_request_and_wait(self, cmd, args):
         request = await self._api.make_request(cmd, args, True)
         if self._listener is None:
-            raise RuntimeError("A listener is required in order to wait for a response")
+            raise Exception("A listener is required in order to wait for a response")
 
         response = await self._api.get_response(self._listener, request)
         return response
