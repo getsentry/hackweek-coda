@@ -37,7 +37,7 @@ pub enum Cmd {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "kind", content = "value")]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Outcome {
     Success(Value),
     Failure(Value),
@@ -132,6 +132,7 @@ pub struct WorkflowEnded {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkflowStatus {
     Enqueued,
     InProgress,
