@@ -26,7 +26,7 @@ class Task:
         self.max_retries = max_retries
         self._func = weakref(func)
 
-    def retriable_for(self, exc):
+    def retryable_for(self, exc):
         for retry_on_exc in self._retry_on:
             if isinstance(exc, retry_on_exc):
                 return True

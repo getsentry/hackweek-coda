@@ -280,14 +280,14 @@ class Supervisor:
             }
         )
 
-    async def task_failed(self, workflow_run_id, task_id, task_key, retriable):
+    async def task_failed(self, workflow_run_id, task_id, task_key, retryable):
         await self._api.make_request(
             cmd="task_failed",
             args={
                 "workflow_run_id": workflow_run_id.bytes,
                 "task_id": task_id.bytes,
                 "task_key": task_key.bytes,
-                "retriable": retriable
+                "retryable": retryable
             }
         )
 

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+from weakref import WeakSet
 from abc import ABC, abstractmethod
 
 from coda._workflow import WorkflowContext
@@ -110,7 +111,7 @@ class JobExecutionActor(TxActor):
         self._supported_tasks = supported_tasks
         self._non_blocking_tx_messages_actor = non_blocking_tx_messages_actor
         # We want to keep track of the tasks spawned by this worker so that we can clean them up.
-        self._created_tasks = []
+        self._created_tasks = WeakSet()
 
     async def on_item_received(self, item):
         job_type, args = item
@@ -118,9 +119,9 @@ class JobExecutionActor(TxActor):
         # We have to start tasks and not block, since if we block, the processing of jobs will stall and the system
         # will block.
         if job_type == "workflow":
-            self._created_tasks.append(asyncio.create_task(self._execute_workflow(args)))
+            self._created_tasks.add(asyncio.create_task(self._execute_workflow(args)))
         elif job_type == "task":
-            self._created_tasks.append(asyncio.create_task(self._execute_task(args)))
+            self._created_tasks.add(asyncio.create_task(self._execute_task(args)))
         else:
             raise Exception(f"Job type {job_type} not supported")
 
@@ -180,10 +181,10 @@ class JobExecutionActor(TxActor):
                 logging.debug(f"Persisting result {result} for task {task_name} in workflow {workflow_run_id}")
                 await self._supervisor.publish_task_result(task_id, task_key, workflow_run_id, result)
         except Exception as exc:
-            retriable = coda_task.retriable_for(exc)
-            if retriable:
-                logging.debug(f"Retriable exception {exc} occurred in task {task_name}")
+            retryable = coda_task.retryable_for(exc)
+            if retryable:
+                logging.debug(f"Retryable exception [{exc}] occurred in task {task_name}")
             else:
-                logging.debug(f"Non-retriable exception {exc} occurred in task {task_name}")
+                logging.debug(f"Non-retryable exception [{exc}] occurred in task {task_name}")
 
-            #await self._supervisor.task_failed(workflow_run_id, task_id, task_key, retriable)
+            await self._supervisor.task_failed(workflow_run_id, task_id, task_key, retryable)
