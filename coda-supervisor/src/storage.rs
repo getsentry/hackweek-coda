@@ -6,17 +6,10 @@ use std::future::poll_fn;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
-use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
 use anyhow::{anyhow, Error};
 use ciborium::Value;
-use coda_ipc::RetryPolicy;
-use coda_ipc::Task;
-use coda_ipc::TtlPolicy;
-use coda_ipc::Workflow;
-use coda_ipc::WorkflowStatus;
+use coda_ipc::{Outcome, Task, Workflow, WorkflowStatus};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use tokio::sync::mpsc;
@@ -51,16 +44,17 @@ pub enum DequeuedItem {
 
 #[derive(Debug)]
 struct WorkflowState {
-    task_results: HashMap<Uuid, Value>,
+    task_results: HashMap<Uuid, Outcome>,
     task_result_interests: HashMap<Uuid, HashSet<(Recipient, Uuid)>>,
+    // XXX: i hate it, because active tasks disappear when they are
+    // rescheduled on retry :-/
+    active_tasks: HashMap<Uuid, Task>,
     status: WorkflowStatus,
-    deadline: Option<SystemTime>,
-    next_idle_check: Option<SystemTime>,
-    max_retries: usize,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct Storage {
+    config: Arc<Config>,
     pub(crate) params: HashMap<(Uuid, Uuid), Arc<BTreeMap<String, Value>>>,
     task_queues: HashMap<String, InMemoryQueue<Task>>,
     workflow_queues: HashMap<String, InMemoryQueue<Workflow>>,
@@ -68,7 +62,7 @@ pub(crate) struct Storage {
 }
 
 impl Storage {
-    pub fn from_config(config: &Config) -> Storage {
+    pub fn from_config(config: Arc<Config>) -> Storage {
         let mut task_queues = HashMap::new();
         for queue in config.iter_task_queues() {
             task_queues.insert(queue.to_string(), InMemoryQueue::new());
@@ -80,10 +74,19 @@ impl Storage {
         }
 
         Storage {
+            config,
             params: HashMap::new(),
             task_queues,
             workflow_queues,
             workflow_state: HashMap::new(),
+        }
+    }
+
+    pub fn register_active_task(&mut self, task: &Task) {
+        if let Some(workflow_state) = self.workflow_state.get_mut(&task.workflow_run_id) {
+            workflow_state
+                .active_tasks
+                .insert(task.task_id, task.clone());
         }
     }
 
@@ -93,29 +96,10 @@ impl Storage {
             WorkflowState {
                 task_results: HashMap::new(),
                 task_result_interests: HashMap::new(),
+                active_tasks: HashMap::new(),
                 status: WorkflowStatus::Enqueued,
-                deadline: None,
-                next_idle_check: None,
-                max_retries: 0,
             },
         );
-    }
-
-    pub fn update_workflow_retry_policy(&mut self, workflow_run_id: Uuid, policy: &RetryPolicy) {
-        if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
-            workflow_state.max_retries = policy.max_retries;
-        }
-    }
-
-    pub fn update_workflow_ttl_policy(&mut self, workflow_run_id: Uuid, policy: &TtlPolicy) {
-        if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
-            workflow_state.deadline = policy
-                .deadline
-                .map(|x| UNIX_EPOCH + Duration::from_millis((x * 1000.0) as u64));
-            workflow_state.next_idle_check = policy
-                .idle_timeout
-                .map(|x| UNIX_EPOCH + Duration::from_millis((x * 1000.0) as u64));
-        }
     }
 
     pub fn mark_workflow_started(&mut self, workflow_run_id: Uuid) {
@@ -137,7 +121,7 @@ impl Storage {
             })
     }
 
-    /// Stores a result.
+    /// Stores a result and marks a task as done.
     ///
     /// This returns the registered interests on the value and they must be notified.
     #[must_use]
@@ -145,9 +129,11 @@ impl Storage {
         &mut self,
         workflow_run_id: Uuid,
         task_key: Uuid,
-        result: Value,
+        task_id: Uuid,
+        result: Outcome,
     ) -> Option<HashSet<(Recipient, Uuid)>> {
         if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
+            workflow_state.active_tasks.remove(&task_id);
             workflow_state.task_results.insert(task_key, result);
             workflow_state.task_result_interests.remove(&task_key)
         } else {
@@ -155,8 +141,30 @@ impl Storage {
         }
     }
 
+    /// Marks a task as failed.
+    ///
+    /// Returns a new task if it needs to be retried.
+    #[must_use]
+    pub fn handle_task_failed(
+        &mut self,
+        workflow_run_id: Uuid,
+        task_id: Uuid,
+        retryable: bool,
+    ) -> Option<Task> {
+        if let Some(workflow_state) = self.workflow_state.get_mut(&workflow_run_id) {
+            if let Some(mut active_task) = workflow_state.active_tasks.remove(&task_id) {
+                if retryable && active_task.retries_remaining > 0 {
+                    active_task.retries_remaining -= 1;
+                    active_task.task_id = Uuid::new_v4();
+                    return Some(active_task);
+                }
+            }
+        }
+        None
+    }
+
     /// Retrieves a result.
-    pub fn get_task_result(&self, workflow_run_id: Uuid, task_key: Uuid) -> Option<Value> {
+    pub fn get_task_result(&self, workflow_run_id: Uuid, task_key: Uuid) -> Option<Outcome> {
         self.workflow_state
             .get(&workflow_run_id)
             .and_then(|x| x.task_results.get(&task_key))
@@ -188,21 +196,25 @@ impl Storage {
     }
 
     /// Publishes a task to a specific queue.
-    pub async fn enqueue_task(&self, queue: &str, task: Task) -> Result<(), Error> {
+    pub async fn enqueue_task(&self, task: Task) -> Result<(), Error> {
+        let queue_name = self.config.queue_name_for_task_name(&task.task_name);
         let q = self
             .task_queues
-            .get(queue)
-            .ok_or_else(|| anyhow!("could not find task queue '{}'", queue))?;
+            .get(queue_name)
+            .ok_or_else(|| anyhow!("could not find task queue '{}'", queue_name))?;
         q.send(task).await?;
         Ok(())
     }
 
     /// Publishes a workflow to a specific queue.
-    pub async fn enqueue_workflow(&self, queue: &str, workflow: Workflow) -> Result<(), Error> {
+    pub async fn enqueue_workflow(&self, workflow: Workflow) -> Result<(), Error> {
+        let queue_name = self
+            .config
+            .queue_name_for_workflow_name(&workflow.workflow_name);
         let q = self
             .workflow_queues
-            .get(queue)
-            .ok_or_else(|| anyhow!("could not find workflow queue '{}'", queue))?;
+            .get(queue_name)
+            .ok_or_else(|| anyhow!("could not find workflow queue '{}'", queue_name))?;
         q.send(workflow).await?;
         Ok(())
     }

@@ -36,10 +36,17 @@ pub enum Cmd {
     WorkflowEnded(WorkflowEnded),
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "kind", content = "value")]
+pub enum Outcome {
+    Success(Value),
+    Failure(Value),
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Resp {
     pub request_id: Uuid,
-    pub result: Value,
+    pub result: Outcome,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -81,6 +88,8 @@ pub struct Task {
     pub params_id: Uuid,
     pub workflow_run_id: Uuid,
     pub persist_result: bool,
+    #[serde(default)]
+    pub retries_remaining: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -93,25 +102,23 @@ pub struct GetTaskResult {
 pub struct PublishTaskResult {
     pub workflow_run_id: Uuid,
     pub task_key: Uuid,
-    pub result: Value,
+    pub task_id: Uuid,
+    pub result: Outcome,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TaskFailed {
+    pub workflow_run_id: Uuid,
     pub task_id: Uuid,
     pub task_key: Uuid,
+    pub retryable: bool,
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Workflow {
     pub workflow_name: String,
     pub workflow_run_id: Uuid,
     pub params_id: Uuid,
-    #[serde(default)]
-    pub retry_policy: Option<RetryPolicy>,
-    #[serde(default)]
-    pub ttl_policy: Option<TtlPolicy>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -130,15 +137,4 @@ pub enum WorkflowStatus {
     InProgress,
     Failed,
     Success,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct RetryPolicy {
-    pub max_retries: usize,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TtlPolicy {
-    pub deadline: Option<f64>,
-    pub idle_timeout: Option<f64>,
 }
