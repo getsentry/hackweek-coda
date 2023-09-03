@@ -1,10 +1,13 @@
 use std::net::SocketAddr;
+
 use anyhow::Error;
-use tokio::sync::mpsc;
-use tokio::{signal};
-use coda_ipc::Message;
-use crate::transport::{FlowTransport, Recipient};
 use futures::future::Either;
+use tokio::signal;
+use tokio::sync::mpsc;
+
+use coda_ipc::Message;
+
+use crate::transport::{FlowTransport, Recipient};
 
 pub type MainLoopTx = mpsc::Sender<(Recipient, Result<Message, Error>)>;
 pub type MainLoopRx = mpsc::Receiver<(Recipient, Result<Message, Error>)>;
@@ -13,11 +16,10 @@ pub struct FlowMainLoop {
     mainloop_tx: MainLoopTx,
     mainloop_rx: MainLoopRx,
     shutting_down: bool,
-    flow_transport: Option<FlowTransport>
+    flow_transport: Option<FlowTransport>,
 }
 
 impl FlowMainLoop {
-
     pub async fn new(listen_addr: Option<SocketAddr>) -> Result<Self, Error> {
         let (mainloop_tx, mainloop_rx) = mpsc::channel(100);
         let instance = FlowMainLoop {
@@ -28,7 +30,7 @@ impl FlowMainLoop {
                 Some(FlowTransport::connect(addr, mainloop_tx).await?)
             } else {
                 None
-            }
+            },
         };
         Ok(instance)
     }

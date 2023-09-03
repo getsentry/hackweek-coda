@@ -1,7 +1,8 @@
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
 use anyhow::Error;
-use futures::future::err;
+
 use crate::concurrency::FlowMainLoop;
 
 mod persistence;
