@@ -14,8 +14,8 @@ pub type MainLoopTx = mpsc::Sender<(Recipient, Result<Message, Error>)>;
 pub type MainLoopRx = mpsc::Receiver<(Recipient, Result<Message, Error>)>;
 
 pub struct FlowMainLoop {
-    mainloop_tx: MainLoopTx,
-    mainloop_rx: MainLoopRx,
+    main_loop_tx: MainLoopTx,
+    main_loop_rx: MainLoopRx,
     shutting_down: bool,
     flow_transport: Option<FlowTransport>,
 }
@@ -24,11 +24,11 @@ impl FlowMainLoop {
     pub async fn new(listen_addr: Option<SocketAddr>) -> Result<Self, Error> {
         let (mainloop_tx, mainloop_rx) = mpsc::channel(100);
         let instance = FlowMainLoop {
-            mainloop_tx: mainloop_tx.clone(),
-            mainloop_rx,
+            main_loop_tx: mainloop_tx.clone(),
+            main_loop_rx: mainloop_rx,
             shutting_down: false,
             flow_transport: if let Some(addr) = listen_addr {
-                Some(FlowTransport::connect(addr, mainloop_tx).await?)
+                Some(FlowTransport::connect(addr).await?)
             } else {
                 None
             },
@@ -58,13 +58,14 @@ impl FlowMainLoop {
     async fn event_loop_iterate(&mut self) -> Result<(), Error> {
         tokio::select! {
             // We receive a message on the main loop channel.
-            Some((recipient, rv)) = self.mainloop_rx.recv() => {
+            Some((recipient, rv)) = self.main_loop_rx.recv() => {
                 event!(Level::DEBUG, "received message on main loop");
             },
-            // We receive a message via the flow transport layer.
+            // We receive a message via the flow transport layer which will be re-routed into
+            // the main loop channel.
             _ = self.flow_transport
                 .as_mut()
-                .map(|x| Either::Left(x.accept()))
+                .map(|x| Either::Left(x.accept_and_register(self.main_loop_tx.clone())))
                 .unwrap_or(Either::Right(futures::future::pending())) => {
                 event!(Level::DEBUG, "client is connected to the flow transport");
             }

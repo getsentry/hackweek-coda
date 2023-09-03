@@ -21,31 +21,27 @@ pub enum Recipient {
 pub struct FlowTransport {
     listener: TcpListener,
     clients: HashMap<SocketAddr, OwnedWriteHalf>,
-    mainloop_tx: MainLoopTx,
 }
 
 impl FlowTransport {
-    pub async fn connect(
-        addr: SocketAddr,
-        mainloop_tx: MainLoopTx,
-    ) -> Result<FlowTransport, Error> {
+    pub async fn connect(addr: SocketAddr) -> Result<FlowTransport, Error> {
         Ok(FlowTransport {
             listener: TcpListener::bind(addr).await?,
             clients: HashMap::new(),
-            mainloop_tx,
         })
     }
 
-    pub async fn accept(&mut self) -> Result<(), Error> {
+    pub async fn accept_and_register(&mut self, main_loop_tx: MainLoopTx) -> Result<(), Error> {
         let (stream, addr) = self.listener.accept().await?;
         let (mut read, write) = stream.into_split();
         self.clients.insert(addr, write);
-        let mainloop_tx = self.mainloop_tx.clone();
+
+        let main_loop_tx = main_loop_tx.clone();
         tokio::spawn(async move {
             loop {
                 let msg = read_msg(&mut read).await;
                 let failed = msg.is_err();
-                if mainloop_tx
+                if main_loop_tx
                     .send((Recipient::Client(addr), msg))
                     .await
                     .is_err()
