@@ -56,6 +56,10 @@ impl FlowMainLoop {
     }
 
     async fn event_loop_iterate(&mut self) -> Result<(), Error> {
+        // This main loop will contain all the possible actions that flow can perform at each loop
+        // iteration, which include:
+        // - Consuming all incoming messages
+        // - Accepting an incoming flow transport connection
         tokio::select! {
             // We receive a message on the main loop channel.
             Some((recipient, rv)) = self.main_loop_rx.recv() => {
