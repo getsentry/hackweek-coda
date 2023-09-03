@@ -2,6 +2,10 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use anyhow::Error;
+use tracing::metadata::LevelFilter;
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::concurrency::FlowMainLoop;
 
@@ -17,7 +21,7 @@ mod concurrency;
 // * Basic representation of workflow/task state in the database
 
 pub async fn execute() -> Result<(), Error> {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 5890);
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 56019);
     let mut main_loop = FlowMainLoop::new(Some(addr)).await?;
     main_loop.run().await?;
     Ok(())
@@ -26,6 +30,14 @@ pub async fn execute() -> Result<(), Error> {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::registry()
+        .with(console_subscriber::spawn())
+        .with(tracing_subscriber::fmt::layer()
+            .pretty()
+            .with_filter(LevelFilter::DEBUG)
+        )
+        .init();
+
     match execute().await {
         Ok(_) => {}
         Err(error) => {

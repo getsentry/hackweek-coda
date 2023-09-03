@@ -4,6 +4,7 @@ use anyhow::Error;
 use futures::future::Either;
 use tokio::signal;
 use tokio::sync::mpsc;
+use tracing::{event, Level};
 
 use coda_ipc::Message;
 
@@ -58,13 +59,15 @@ impl FlowMainLoop {
         tokio::select! {
             // We receive a message on the main loop channel.
             Some((recipient, rv)) = self.mainloop_rx.recv() => {
-                println!("RECEIVED MESSAGE ON MAIN LOOP")
+                event!(Level::DEBUG, "received message on main loop");
             },
             // We receive a message via the flow transport layer.
             _ = self.flow_transport
                 .as_mut()
                 .map(|x| Either::Left(x.accept()))
-                .unwrap_or(Either::Right(futures::future::pending())) => {}
+                .unwrap_or(Either::Right(futures::future::pending())) => {
+                event!(Level::DEBUG, "client is connected to the flow transport");
+            }
         }
         Ok(())
     }
