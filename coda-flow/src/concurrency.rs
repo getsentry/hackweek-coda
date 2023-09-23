@@ -6,7 +6,7 @@ use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{event, Level};
 
-use coda_ipc::Message;
+use coda_ipc::{Cmd, Message, Req};
 
 use crate::transport::{FlowTransport, Recipient};
 
@@ -63,16 +63,44 @@ impl FlowMainLoop {
         tokio::select! {
             // We receive a message on the main loop channel.
             Some((recipient, rv)) = self.main_loop_rx.recv() => {
-                event!(Level::DEBUG, "received message on main loop");
+                match rv {
+                    Ok(msg) => {
+                        match self.handle_message(recipient, msg).await {
+                            Ok(()) => {}
+                            Err(err) => {
+                                event!(Level::ERROR, "error while handling message: {}", err);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        event!(Level::ERROR, "error when receiving message: {}", err);
+                    }
+                }
             },
-            // We receive a message via the flow transport layer which will be re-routed into
-            // the main loop channel.
+            // We accept an incoming connection on the transport which will be registered on the
+            // main loop.
             _ = self.flow_transport
                 .as_mut()
                 .map(|x| Either::Left(x.accept_and_register(self.main_loop_tx.clone())))
                 .unwrap_or(Either::Right(futures::future::pending())) => {
                 event!(Level::DEBUG, "client is connected to the flow transport");
             }
+        }
+        Ok(())
+    }
+
+    async fn handle_message(&self, recipient: Recipient, msg: Message) -> Result<(), Error> {
+        match msg {
+            Message::Req(req) => self.handle_request(recipient, req).await?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_request(&self, recipient: Recipient, req: Req) -> Result<(), Error> {
+        match req.cmd {
+            Cmd::SpawnWorkflow(workflow) => {}
+            _ => {}
         }
         Ok(())
     }
