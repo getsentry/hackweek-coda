@@ -1,6 +1,6 @@
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
 use tracing::metadata::LevelFilter;
@@ -9,10 +9,11 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
 use crate::concurrency::FlowMainLoop;
-use crate::persistence::{Database, History};
+use crate::persistence::{Database, FlowHistory};
 
 mod concurrency;
 mod core;
+mod entities;
 mod persistence;
 mod transport;
 
@@ -24,10 +25,8 @@ mod transport;
 
 pub async fn execute() -> Result<(), Error> {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 56019);
-    let db = Arc::new(Database::connect("localhost", "5455", "coda", "coda").await?);
-    let history = History::init(db.clone()).await;
-    history.prepare_tables().await;
-    let mut main_loop = FlowMainLoop::new(Some(addr)).await?;
+    let db = Database::connect("localhost", "5455", "coda", "coda").await?;
+    let mut main_loop = FlowMainLoop::new(Some(addr), Arc::new(Mutex::new(db))).await?;
     main_loop.run().await?;
     Ok(())
 }

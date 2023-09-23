@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Error;
 use futures::future::Either;
@@ -6,6 +7,8 @@ use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{event, Level};
 
+use crate::entities::Workflow;
+use crate::persistence::{Database, FlowHistory};
 use coda_ipc::{Cmd, Message, Req};
 
 use crate::transport::{FlowTransport, Recipient};
@@ -18,10 +21,11 @@ pub struct FlowMainLoop {
     main_loop_rx: MainLoopRx,
     shutting_down: bool,
     flow_transport: Option<FlowTransport>,
+    flow_history: FlowHistory,
 }
 
 impl FlowMainLoop {
-    pub async fn new(listen_addr: Option<SocketAddr>) -> Result<Self, Error> {
+    pub async fn new(listen_addr: Option<SocketAddr>, db: Arc<Mutex<Database>>) -> Result<Self, Error> {
         let (mainloop_tx, mainloop_rx) = mpsc::channel(100);
         let instance = FlowMainLoop {
             main_loop_tx: mainloop_tx.clone(),
@@ -32,6 +36,7 @@ impl FlowMainLoop {
             } else {
                 None
             },
+            flow_history: FlowHistory::init(db.clone()).await?,
         };
         Ok(instance)
     }
@@ -99,7 +104,15 @@ impl FlowMainLoop {
 
     async fn handle_request(&self, recipient: Recipient, req: Req) -> Result<(), Error> {
         match req.cmd {
-            Cmd::SpawnWorkflow(workflow) => {}
+            Cmd::SpawnWorkflow(workflow) => {
+                self.flow_history
+                    .enqueue_workflow(Workflow {
+                        workflow_name: workflow.workflow_name,
+                        workflow_run_id: workflow.workflow_run_id,
+                        workflow_params_id: Some(workflow.params_id),
+                    })
+                    .await?
+            }
             _ => {}
         }
         Ok(())
