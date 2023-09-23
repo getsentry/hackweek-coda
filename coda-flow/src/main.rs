@@ -26,6 +26,7 @@ mod transport;
 pub async fn execute() -> Result<(), Error> {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 56019);
     let db = Database::connect("localhost", "5455", "coda", "coda").await?;
+
     let mut main_loop = FlowMainLoop::new(Some(addr), Arc::new(Mutex::new(db))).await?;
     main_loop.run().await?;
     Ok(())

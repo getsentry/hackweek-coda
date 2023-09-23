@@ -25,7 +25,10 @@ pub struct FlowMainLoop {
 }
 
 impl FlowMainLoop {
-    pub async fn new(listen_addr: Option<SocketAddr>, db: Arc<Mutex<Database>>) -> Result<Self, Error> {
+    pub async fn new(
+        listen_addr: Option<SocketAddr>,
+        db: Arc<Mutex<Database>>,
+    ) -> Result<Self, Error> {
         let (mainloop_tx, mainloop_rx) = mpsc::channel(100);
         let instance = FlowMainLoop {
             main_loop_tx: mainloop_tx.clone(),
