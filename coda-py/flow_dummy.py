@@ -1,8 +1,9 @@
 import asyncio
-import os
-import uuid
-import cbor2
 import struct
+import uuid
+
+import cbor2
+
 
 class TCPFlow:
 
@@ -22,14 +23,14 @@ class TCPFlow:
 
         return self.rx, self.tx
 
-    async def _write_to_socket(self, data):
+    async def write_to_socket(self, data):
         msg = cbor2.dumps(data)
 
         _, tx = await self._open_socket()
         tx.write(struct.pack('!i', len(msg)) + msg)
         await tx.drain()
 
-    async def _read_from_socket(self):
+    async def read_from_socket(self):
         rx, _ = await self._open_socket()
 
         msg = await rx.read(4)
@@ -41,3 +42,22 @@ class TCPFlow:
             return None
 
         return cbor2.loads(bytes_vals)
+
+
+async def run():
+    tcp = TCPFlow("127.0.0.1:56019")
+    spawn_workflow = {
+        "type": "req",
+        "cmd": "spawn_workflow",
+        "args": {
+            "workflow_name": "MyWorkflow",
+            "workflow_run_id": uuid.uuid4().bytes,
+            "params_id": uuid.uuid4().bytes,
+
+        }
+    }
+    await tcp.write_to_socket(spawn_workflow)
+
+
+if __name__ == '__main__':
+    asyncio.run(run())
