@@ -26,7 +26,7 @@ use tokio::{signal, time};
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use coda_ipc::{Cmd, Event, Message, Outcome, Req, Resp, WorkerDied};
+use coda_ipc::{Cmd, Event, Message, Outcome, Request, Response, WorkerDied};
 use valuable::Valuable;
 
 use crate::config::Config;
@@ -230,7 +230,7 @@ impl Controller {
                         for worker in self.workers.iter() {
                             if worker.state.tasks.contains(&task.task_name) {
                                 self.storage.register_active_task(&task);
-                                self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Req {
+                                self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Request {
                                     request_id: None,
                                     cmd: Cmd::ExecuteTask(task),
                                 })).await?;
@@ -255,7 +255,7 @@ impl Controller {
                         for worker in self.workers.iter() {
                             if worker.state.workflows.contains(&workflow.workflow_name) {
                                 self.storage.mark_workflow_started(worker.worker_id);
-                                self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Req {
+                                self.send_msg(Recipient::Worker(worker.worker_id), Message::Req(Request {
                                     request_id: None,
                                     cmd: Cmd::ExecuteWorkflow(workflow),
                                 })).await?;
@@ -282,7 +282,7 @@ impl Controller {
                 let request_id = req.request_id;
                 let result = self.handle_request(recipient, req).await?;
                 if let (Some(result), Some(request_id)) = (result, request_id) {
-                    self.send_msg(recipient, Message::Resp(Resp { request_id, result }))
+                    self.send_msg(recipient, Message::Resp(Response { request_id, result }))
                         .await?;
                 }
                 Ok(())
@@ -314,7 +314,7 @@ impl Controller {
     async fn handle_request(
         &mut self,
         recipient: Recipient,
-        req: Req,
+        req: Request,
     ) -> Result<Option<Outcome>, Error> {
         Ok(match req.cmd {
             Cmd::RegisterWorker(cmd) => {
@@ -404,7 +404,7 @@ impl Controller {
                     for (recipient, request_id) in interests.into_iter() {
                         self.send_msg(
                             recipient,
-                            Message::Resp(Resp {
+                            Message::Resp(Response {
                                 request_id,
                                 result: outcome.clone(),
                             }),
@@ -469,7 +469,7 @@ impl Controller {
                         for (recipient, request_id) in interests.into_iter() {
                             self.send_msg(
                                 recipient,
-                                Message::Resp(Resp {
+                                Message::Resp(Response {
                                     request_id,
                                     result: outcome.clone(),
                                 }),

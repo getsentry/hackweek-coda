@@ -36,8 +36,7 @@ class TCPFlow:
         msg = await rx.read(4)
         if not msg:
             return None
-
-        bytes_vals = await rx.read()
+        bytes_vals = await rx.read(struct.unpack('!i', msg)[0])
         if not bytes_vals:
             return None
 
@@ -48,15 +47,18 @@ async def run():
     tcp = TCPFlow("127.0.0.1:56019")
     spawn_workflow = {
         "type": "req",
+        "sender": "client",
+        "request_id": uuid.uuid4().bytes,
         "cmd": "spawn_workflow",
         "args": {
             "workflow_name": "MyWorkflow",
             "workflow_run_id": uuid.uuid4().bytes,
             "params_id": uuid.uuid4().bytes,
-
         }
     }
     await tcp.write_to_socket(spawn_workflow)
+    result = await tcp.read_from_socket()
+    print(result)
 
 
 if __name__ == '__main__':
