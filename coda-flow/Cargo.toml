@@ -1,0 +1,26 @@
+[package]
+name = "coda-flow"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.75"
+bytes = "1.4.0"
+ciborium = "0.2.1"
+clap = { version = "4.3.23", features = ["derive"] }
+coda-ipc = { version = "0.1.0", path = "../coda-ipc" }
+console-subscriber = "0.1.10"
+futures = "0.3.28"
+nix = { version = "0.26.2", features = ["fs"] }
+rand = "0.8.5"
+serde = "1.0.185"
+tempfile = "3.8.0"
+tokio = { version = "1.32.0", features = ["full", "tracing"] }
+toml = "0.7.6"
+tracing = { version = "0.1.37", features = ["async-await", "valuable"] }
+tracing-subscriber = "0.3.17"
+uuid = { version = "1.4.1", features = ["v4"] }
+valuable = { version = "0.1.0", features = ["std", "alloc"] }
+tokio-postgres = { version = "0.7.10", features = ["with-uuid-1"] }

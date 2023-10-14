@@ -7,16 +7,25 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Message {
-    Req(Req),
-    Resp(Resp),
+    Req(Request),
+    Resp(Response),
     Event(Event),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Req {
+pub struct Request {
     #[serde(flatten)]
     pub cmd: Cmd,
+    pub sender: Sender,
     pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum Sender {
+    Flow,
+    Supervisor,
+    Client
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -44,7 +53,7 @@ pub enum Outcome {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Resp {
+pub struct Response {
     pub request_id: Uuid,
     pub result: Outcome,
 }
