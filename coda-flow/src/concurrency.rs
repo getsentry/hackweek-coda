@@ -1,15 +1,18 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Error;
+use anyhow::{anyhow, Error};
+use ciborium::Value;
 use futures::future::Either;
 use tokio::signal;
 use tokio::sync::mpsc;
 use tracing::{event, Level};
+use uuid::Uuid;
 
 use crate::entities::Workflow;
 use crate::persistence::{Database, FlowHistory};
-use coda_ipc::{Cmd, Message, Req};
+use coda_ipc::{Cmd, Message, Outcome, Request, Response};
+use coda_ipc::Message::Resp;
 
 use crate::transport::{FlowTransport, Recipient};
 
@@ -25,6 +28,7 @@ pub struct FlowMainLoop {
 }
 
 impl FlowMainLoop {
+
     pub async fn new(
         listen_addr: Option<SocketAddr>,
         db: Arc<Mutex<Database>>,
@@ -41,11 +45,13 @@ impl FlowMainLoop {
             },
             flow_history: FlowHistory::init(db.clone()).await?,
         };
+
         Ok(instance)
     }
 
     pub async fn run(&mut self) -> Result<(), Error> {
         self.event_loop().await?;
+
         Ok(())
     }
 
@@ -60,6 +66,7 @@ impl FlowMainLoop {
                 _ = self.event_loop_iterate() => {}
             }
         }
+
         Ok(())
     }
 
@@ -89,15 +96,16 @@ impl FlowMainLoop {
             // main loop.
             _ = self.flow_transport
                 .as_mut()
-                .map(|x| Either::Left(x.accept_and_register(self.main_loop_tx.clone())))
+                .map(|x| Either::Left(x.accept_and_listen(self.main_loop_tx.clone())))
                 .unwrap_or(Either::Right(futures::future::pending())) => {
                 event!(Level::DEBUG, "client is connected to the flow transport");
             }
         }
+
         Ok(())
     }
 
-    async fn handle_message(&self, recipient: Recipient, msg: Message) -> Result<(), Error> {
+    async fn handle_message(&mut self, recipient: Recipient, msg: Message) -> Result<(), Error> {
         match msg {
             Message::Req(req) => self.handle_request(recipient, req).await?,
             _ => {}
@@ -105,7 +113,8 @@ impl FlowMainLoop {
         Ok(())
     }
 
-    async fn handle_request(&self, recipient: Recipient, req: Req) -> Result<(), Error> {
+    async fn handle_request(&mut self, recipient: Recipient, req: Request) -> Result<(), Error> {
+        let request_id = req.request_id;
         match req.cmd {
             Cmd::SpawnWorkflow(workflow) => {
                 self.flow_history
@@ -114,10 +123,27 @@ impl FlowMainLoop {
                         workflow_run_id: workflow.workflow_run_id,
                         workflow_params_id: Some(workflow.params_id),
                     })
-                    .await?
+                    .await?;
+
+                self.handle_response(&recipient, request_id, Outcome::Success(Value::Null)).await?;
             }
             _ => {}
         }
+
+        Ok(())
+    }
+
+    async fn handle_response(&mut self, recipient: &Recipient, request_id: Option<Uuid>, result: Outcome) -> Result<(), Error> {
+        let resp = Resp(Response {
+            request_id: request_id.ok_or(anyhow!("The request doesn't have a request_id"))?,
+            result
+        });
+
+        self.flow_transport
+            .as_mut()
+            .ok_or(anyhow!("The transport is not initialized"))?
+            .send(resp, recipient).await?;
+
         Ok(())
     }
 }
